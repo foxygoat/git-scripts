@@ -1,0 +1,22 @@
+#!/bin/bash -x
+#
+# Update the author timestamps on commits so they are in order.
+# When you re-order commits with git-rebase --interactive, the author
+# timestamp is preserved. However, github orders commits based on the
+# author timestamp so it does not show then in graph order in the UI.
+# This script updates the author timestamp of the commits on a branch
+# to be in order so github shows it in the correct order.
+# We cannot just use `git rebase --ignore-date` as that will usually
+# set the author date of each commit to be the same, and github seems
+# to be non-determinstic in the order it shows these. Instead we want
+# each commit to be 1 second later than the previous.
+
+branch="${1:-master}"
+fork_point=$(git merge-base --fork-point "${branch}")
+num_commits=$(git rev-list --count "${fork_point}"..)
+now=$(date +%s)
+date_subst="\$(($now - $num_commits + \$(git rev-list --count ${fork_point}..)))"
+
+git rebase \
+  --exec "git commit --amend --no-edit --date=\"${date_subst}\"" \
+  "${branch}"
