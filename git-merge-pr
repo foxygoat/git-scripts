@@ -79,8 +79,8 @@ gitmoji=':sparkles:'
 title="${merge_from_branch#feature/}" # strip of leading "feature/"
 title="${title//[-_]/ }" # convert _ and - to spaces
 pr_num="${pr_url##*/}"
-newline=$'\n'
-message="${gitmoji} Merge ${title} (#${pr_num})${newline}${newline}"
+message="${gitmoji} Merge ${title} (#${pr_num})"
+message+=$'\n\n'
 message+=$(git log --reverse --pretty=tformat:"* %s" "...${merge_from_branch}")
 message+=$'\n\n'
 message+=$(git diff --no-color --stat "...${merge_from_branch}")
