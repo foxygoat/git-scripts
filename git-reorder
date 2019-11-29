@@ -1,4 +1,4 @@
-#!/bin/bash -x
+#!/bin/bash
 #
 # Update the author timestamps on commits so they are in order.
 # When you re-order commits with git-rebase --interactive, the author
