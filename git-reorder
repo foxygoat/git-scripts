@@ -1,4 +1,4 @@
-#!/bin/bash -x
+#!/bin/bash
 #
 # Update the author timestamps on commits so they are in order.
 # When you re-order commits with git-rebase --interactive, the author
@@ -10,6 +10,11 @@
 # set the author date of each commit to be the same, and github seems
 # to be non-determinstic in the order it shows these. Instead we want
 # each commit to be 1 second later than the previous.
+#
+# Note: This uses `git merge-base --fork-point` to determine the base
+# for the rebase. This works from the reflog so really only works on
+# branches you have created in this repo. But if you are reworking the
+# commits, that is likely.
 
 branch="${1:-master}"
 fork_point=$(git merge-base --fork-point "${branch}")
@@ -19,4 +24,4 @@ date_subst="\$(($now - $num_commits + \$(git rev-list --count ${fork_point}..)))
 
 git rebase \
   --exec "git commit --amend --no-edit --date=\"${date_subst}\"" \
-  "${branch}"
+  "${fork_point}"
