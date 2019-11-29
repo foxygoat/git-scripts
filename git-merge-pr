@@ -79,12 +79,21 @@ gitmoji=':sparkles:'
 title="${merge_from_branch#feature/}" # strip of leading "feature/"
 title="${title//[-_]/ }" # convert _ and - to spaces
 pr_num="${pr_url##*/}"
-newline=$'\n'
-message="${gitmoji} Merge ${title} (#${pr_num})${newline}${newline}"
+message="${gitmoji} Merge ${title} (#${pr_num})"
+message+=$'\n\n'
+
+num_commits=$(git rev-list --count "...${merge_from_branch}")
+if (( num_commits > 1 )); then
+  message+=$(hub pr list -h "${merge_from_branch}" -f '%b')
+  message+=$'\n\n'
+fi
+
 message+=$(git log --reverse --pretty=tformat:"* %s" "...${merge_from_branch}")
 message+=$'\n\n'
+
 message+=$(git diff --no-color --stat "...${merge_from_branch}")
 message+=$'\n\n'
+
 message+=$'# Gitmoji: https://gitmoji.carloscuesta.me\n'
 message+=$'# rxaviers list: https://gist.github.com/rxaviers/7360908\n'
 
