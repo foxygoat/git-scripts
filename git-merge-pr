@@ -143,7 +143,46 @@ mergepr::_pr_message() {
   fi
 
   echo
-  hub pr list -h "${merge_from_branch}" -f '%b'
+  hub pr list -h "${merge_from_branch}" -f '%b' \
+  | awk "${markdown_for_commit_awk}"
 }
+
+markdown_for_commit_awk='
+# print_heading converts a heading starting with a hash to one with an
+# underline, as a line starting with a hash in a git commit message is
+# ignored.
+function print_heading(line)
+{
+  match(line, /^(##*) (.+)/, groups)
+  marker = length(groups[1]) == 1 ? "=" : "-"
+  heading = groups[2]
+  printf("%s\n", heading)
+  for (i = 0; i < length(heading); i++)
+    printf marker
+  printf "\n"
+}
+
+# If we want a blank and the current line is not blank, inject a blank line.
+/\S/ && want_blank { print "" }
+{ want_blank = 0 }
+
+# Lines starting with one or more hashes, followed by a space and one more
+# char at least are headings. Convert to underline headings.
+/^##* .+/ { print_heading($0); next }
+
+# Convert triple-backtick code blocks to indented code blocks. Ensure there
+# is a blank line before and after the block, but dont add extra unnecessary
+# blank lines.
+/^\s*```/ {
+  in_code_block = !in_code_block
+  want_blank = !last_blank
+  next
+}
+
+# Print other lines, indenting code blocks
+{
+  last_blank = (gsub(/^\s*$/, "") > 0)
+  printf("%s%s\n", in_code_block ? "    " : "", $0)
+}'
 
 [[ "$(caller)" != 0\ * ]] || main "$@" # Run main if file not sourced
