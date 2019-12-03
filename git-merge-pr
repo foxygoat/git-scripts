@@ -16,105 +16,134 @@
 # If <branch> is present, that branch will be merged into the current branch.
 # If <branch> is omitted, the current branch will be merged into master.
 
-set -e
+main() {
+  set -e
+  set -u
+  set -o pipefail
 
-if ! command -v hub >/dev/null; then
-  printf 'You need to install hub (https://github.com/github/hub)\n' >&2
-  exit 1
-fi
+  mergepr::setup "$@"
+  mergepr::prepare
+  mergepr::merge
+  mergepr::push
+  mergepr::clean
+}
 
-if ! original_branch=$(git symbolic-ref --short --quiet HEAD); then
-  printf 'Not on a branch. Ignoring.\n' >&2
-  exit 1
-fi
-
-if ! pr_url=$(hub pr show -u -h "${merge_from_branch}"); then
-  printf 'Cannot get URL for pull request. Is there one?\n' >&2
-  exit 1
-fi
-
-# If given an argument, merge from that branch to the current branch.
-# Otherwise merge from the current branch into master.
-if [[ -n "${1:-}" ]]; then
-  merge_from_branch="$1"
-  merge_to_branch="${original_branch}"
-else
-  merge_from_branch="${original_branch}"
-  merge_to_branch='master'
-fi
-
-if [[ "${merge_from_branch}" == 'master' ]]; then
-  printf "Don't be silly. You're never done with master.\n"
-  exit 0
-fi
-
-switch_needed=false
-if [[ "${original_branch}" != "${merge_to_branch}" ]]; then
-  switch_needed=true
-fi
-
-# Fetch from all remotes so we can check if local branch is up-to-date
-git remote update >/dev/null
-
-echo merging "${merge_from_branch}" to "${merge_to_branch}"
-
-if [[ "$(git rev-parse "${merge_to_branch}")" != "$(git rev-parse "${merge_to_branch}@{upstream}")" ]]; then
-  printf '%s is not up-to-date. You should run:\n' "${merge_to_branch}" >&2
-  if "${switch_needed}"; then
-    printf '  git checkout %s\n' "${merge_to_branch}" >&2
+mergepr::setup() {
+  if ! command -v hub >/dev/null; then
+    printf 'You need to install hub (https://github.com/github/hub)\n' >&2
+    return 1
   fi
-  printf '  git pull\n' >&2
-  exit 1
-fi
 
-if "${switch_needed}"; then
-  git checkout -q "${merge_to_branch}"
-fi
-
-
-# Create default merge log message by making a title from the branch name,
-# a gitmoji, and the PR number, then adding a short log of what's
-# being merged and add a diff stat of the files changed by the merge.
-gitmoji=':sparkles:'
-title="${merge_from_branch#feature/}" # strip of leading "feature/"
-title="${title//[-_]/ }" # convert _ and - to spaces
-pr_num="${pr_url##*/}"
-message="${gitmoji} Merge ${title} (#${pr_num})"
-message+=$'\n\n'
-
-num_commits=$(git rev-list --count "...${merge_from_branch}")
-if (( num_commits > 1 )); then
-  message+=$(hub pr list -h "${merge_from_branch}" -f '%b')
-  message+=$'\n\n'
-fi
-
-message+=$(git log --reverse --pretty=tformat:"* %s" "...${merge_from_branch}")
-message+=$'\n\n'
-
-message+=$(git diff --no-color --stat "...${merge_from_branch}")
-message+=$'\n\n'
-
-message+=$'# Gitmoji: https://gitmoji.carloscuesta.me\n'
-message+=$'# rxaviers list: https://gist.github.com/rxaviers/7360908\n'
-
-#open 'https://gist.github.com/rxaviers/7360908'
-#open 'https://gitmoji.carloscuesta.me'
-
-if ! git merge --edit --no-ff -m "${message}" "${merge_from_branch}"; then
-  printf 'merge aborted\n' >&2
-  git merge --abort
-  if "${switch_needed}"; then
-    git checkout -q "${original_branch}"
+  if ! original_branch=$(git symbolic-ref --short --quiet HEAD); then
+    printf 'Not on a branch. Ignoring.\n' >&2
+    return 1
   fi
-  exit 1
-fi
 
-git push # push merge (closes PR)
-git branch -d "${merge_from_branch}" # delete local branch
-# Wait before deleting branch, otherwise two gitsyncs run in parallel (the
-# merge commit and the branch delete), and one fails due to repo locking
-# on the remote end. This causes a spurious X as a bad commit check in github.
-printf 'Waiting before deleting remote branch (15s)...\n'
-sleep 15
-# TODO(camh): figure out how to determine remote instead of assuming 'origin'
-git push origin -d "${merge_from_branch}" # delete remote branch
+  # If given an argument, merge from that branch to the current branch.
+  # Otherwise merge from the current branch into master.
+  if [[ -n "${1:-}" ]]; then
+    merge_from_branch="$1"
+    merge_to_branch="${original_branch}"
+  else
+    merge_from_branch="${original_branch}"
+    merge_to_branch='master'
+  fi
+
+  if [[ "${merge_from_branch}" == 'master' ]]; then
+    printf "Don't be silly. You're never done with master.\n"
+    return 1
+  fi
+
+  if ! pr_url=$(hub pr show -u -h "${merge_from_branch}"); then
+    printf 'Cannot get URL for pull request. Is there one?\n' >&2
+    return 1
+  fi
+
+  switch_needed=false
+  if [[ "${original_branch}" != "${merge_to_branch}" ]]; then
+    switch_needed=true
+  fi
+}
+
+mergepr::prepare() {
+  echo merging "${merge_from_branch}" to "${merge_to_branch}"
+
+  # Fetch from all remotes so we can check if local branch is up-to-date
+  git remote update >/dev/null
+
+  if [[ "$(git rev-parse "${merge_to_branch}")" != "$(git rev-parse "${merge_to_branch}@{upstream}")" ]]; then
+    printf '%s is not up-to-date. You should run:\n' "${merge_to_branch}" >&2
+    if "${switch_needed}"; then
+      printf '  git checkout %s\n' "${merge_to_branch}" >&2
+    fi
+    printf '  git pull\n' >&2
+    return 1
+  fi
+
+  if "${switch_needed}"; then
+    git checkout -q "${merge_to_branch}"
+  fi
+}
+
+mergepr::merge() {
+  #open 'https://gist.github.com/rxaviers/7360908'
+  #open 'https://gitmoji.carloscuesta.me'
+
+  if ! git merge --edit --no-ff -m "$(mergepr::_merge_message)" "${merge_from_branch}"; then
+    printf 'merge aborted\n' >&2
+    git merge --abort
+    if "${switch_needed}"; then
+      git checkout -q "${original_branch}"
+    fi
+    return 1
+  fi
+}
+
+mergepr::push() {
+  git push # push merge (closes PR)
+}
+
+mergepr::clean() {
+  git branch -d "${merge_from_branch}" # delete local branch
+  # Wait before deleting branch, otherwise two gitsyncs run in parallel (the
+  # merge commit and the branch delete), and one fails due to repo locking
+  # on the remote end. This causes a spurious X as a bad commit check in github.
+  printf 'Waiting before deleting remote branch (15s)...\n'
+  sleep 15
+  # TODO(camh): figure out how to determine remote instead of assuming 'origin'
+  git push origin -d "${merge_from_branch}" # delete remote branch
+}
+
+mergepr::_merge_message() {
+  # Create default merge log message by making a title from the branch name,
+  # a gitmoji, and the PR number, then adding a short log of what's
+  # being merged and add a diff stat of the files changed by the merge.
+  gitmoji=':sparkles:'
+  title="${merge_from_branch#feature/}" # strip of leading "feature/"
+  title="${title//[-_]/ }" # convert _ and - to spaces
+  pr_num="${pr_url##*/}"
+cat <<EOF
+${gitmoji} Merge ${title} (#${pr_num})
+$(mergepr::_pr_message)
+
+$(git log --reverse --pretty=tformat:"* %s" "...${merge_from_branch}")
+
+$(git diff --no-color --stat "...${merge_from_branch}")
+
+# Gitmoji: https://gitmoji.carloscuesta.me
+# rxaviers list: https://gist.github.com/rxaviers/7360908
+#
+EOF
+}
+
+mergepr::_pr_message() {
+  num_commits=$(git rev-list --count "...${merge_from_branch}")
+  if (( num_commits <= 1 )); then
+    return
+  fi
+
+  echo
+  hub pr list -h "${merge_from_branch}" -f '%b'
+}
+
+[[ "$(caller)" != 0\ * ]] || main "$@" # Run main if file not sourced
