@@ -44,9 +44,11 @@ mergepr::setup() {
   if [[ -n "${1:-}" ]]; then
     merge_from_branch="$1"
     merge_to_branch="${original_branch}"
+    pr_show_args=(-h "${merge_from_branch}")
   else
     merge_from_branch="${original_branch}"
     merge_to_branch='master'
+    pr_show_args=()
   fi
 
   if [[ "${merge_from_branch}" == 'master' ]]; then
@@ -54,7 +56,7 @@ mergepr::setup() {
     return 1
   fi
 
-  if ! pr_url=$(hub pr show -u -h "${merge_from_branch}"); then
+  if ! pr_url=$(hub pr show -u ${pr_show_args:+"${pr_show_args[@]}"}); then
     printf 'Cannot get URL for pull request. Is there one?\n' >&2
     return 1
   fi
