@@ -130,7 +130,7 @@ $(mergepr::_pr_message)
 
 $(git log --reverse --pretty=tformat:"* %s" "..${merge_from_branch}")
 
-$(git diff --no-color --stat "..${merge_from_branch}")
+$(git diff --no-color --stat "...${merge_from_branch}")
 
 # Gitmoji: https://gitmoji.carloscuesta.me
 # rxaviers list: https://gist.github.com/rxaviers/7360908
