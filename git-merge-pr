@@ -139,11 +139,6 @@ EOF
 }
 
 mergepr::_pr_message() {
-  num_commits=$(git rev-list --count "..${merge_from_branch}")
-  if (( num_commits <= 1 )); then
-    return
-  fi
-
   echo
   hub pr list -h "${merge_from_branch}" -f '%b' \
   | awk "${markdown_for_commit_awk}"
