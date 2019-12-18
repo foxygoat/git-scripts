@@ -128,9 +128,9 @@ cat <<EOF
 ${gitmoji} Merge ${title} (#${pr_num})
 $(mergepr::_pr_message)
 
-$(git log --reverse --pretty=tformat:"* %s" "...${merge_from_branch}")
+$(git log --reverse --pretty=tformat:"* %s" "..${merge_from_branch}")
 
-$(git diff --no-color --stat "...${merge_from_branch}")
+$(git diff --no-color --stat "..${merge_from_branch}")
 
 # Gitmoji: https://gitmoji.carloscuesta.me
 # rxaviers list: https://gist.github.com/rxaviers/7360908
@@ -139,7 +139,7 @@ EOF
 }
 
 mergepr::_pr_message() {
-  num_commits=$(git rev-list --count "...${merge_from_branch}")
+  num_commits=$(git rev-list --count "..${merge_from_branch}")
   if (( num_commits <= 1 )); then
     return
   fi
