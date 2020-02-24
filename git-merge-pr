@@ -1,20 +1,24 @@
 #!/bin/bash
-# vim: set ts=8 sw=2 sts=2 et sta fileencoding=utf-8:
 #
-# Merge the current branch/PR to master (or $1 if we are already on master)
-# with a merge log message I like, push it, delete the local branch and
-# delete the remote branch.
+# Merge and branch and push it to its remote, where the branch being merged
+# is for a GitHub Pull Request (PR).
 #
-# It is meant to be done when we have approval to merge and to do the
-# merge and subsequent cleanup, from the command line.
-#
-# This works even if you disable pushing directly to master as github is
-# smart enough to recognise the push is pushing a merge, and if that merge
-# is valid (because the PR is approved), it allows it and closes the PR.
+# GitHub allows you to push a merge commit on a branch even when that branch
+# is protected, if that commit is the result of merging a PR and that PR is
+# suitable to be merged (all required checks have been satisfied, the required
+# number of approvals are present, the branch it up-to-date WRT the target
+# branch, etc). This feature allows you to operate from the command line
+# instead of needing to use the GitHub web-ui to close a PR.
 #
 # Usage: git merge-pr [branch]
-# If <branch> is present, that branch will be merged into the current branch.
-# If <branch> is omitted, the current branch will be merged into master.
+#
+# If [branch] is not supplied, the current branch will be merged into the
+# base branch for the PR. If [branch] is supplied, it is merged into the
+# base branch for the PR, regardless of what the current branch is.
+#
+# This scripts relies on the github `hub` tool to retrieve information
+# about the merge branch PR. It will fail if not installed. Install it
+# from https://github.com/github/hub.
 
 main() {
   set -e
@@ -39,27 +43,14 @@ mergepr::setup() {
     return 1
   fi
 
-  # If given an argument, merge from that branch to the current branch.
-  # Otherwise merge from the current branch into master.
-  if [[ -n "${1:-}" ]]; then
-    merge_from_branch="$1"
-    merge_to_branch="${original_branch}"
-    pr_show_args=(-h "${merge_from_branch}")
-  else
-    merge_from_branch="${original_branch}"
-    merge_to_branch='master'
-    pr_show_args=()
-  fi
-
-  if [[ "${merge_from_branch}" == 'master' ]]; then
-    printf "Don't be silly. You're never done with master.\\n"
-    return 1
-  fi
-
-  if ! pr_url=$(hub pr show -u ${pr_show_args:+"${pr_show_args[@]}"}); then
+  # If given an argument, merge that branch. Otherwise merge the current branch
+  merge_from_branch="${1:-${original_branch}}"
+  if ! merge_to_branch=$(hub pr show -f '%B' -h "${merge_from_branch}"); then
     printf 'Cannot get URL for pull request. Is there one?\n' >&2
     return 1
   fi
+
+  pr_num=$(hub pr show -f '%I' -h "${merge_from_branch}")
 
   switch_needed=false
   if [[ "${original_branch}" != "${merge_to_branch}" ]]; then
@@ -123,7 +114,6 @@ mergepr::_merge_message() {
   gitmoji=':sparkles:'
   title="${merge_from_branch#feature/}" # strip of leading "feature/"
   title="${title//[-_]/ }" # convert _ and - to spaces
-  pr_num="${pr_url##*/}"
 cat <<EOF
 ${gitmoji} Merge ${title} (#${pr_num})
 $(mergepr::_pr_message)
