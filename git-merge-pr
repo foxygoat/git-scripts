@@ -52,7 +52,7 @@ mergepr::setup() {
   fi
 
   if [[ "${merge_from_branch}" == 'master' ]]; then
-    printf "Don't be silly. You're never done with master.\n"
+    printf "Don't be silly. You're never done with master.\\n"
     return 1
   fi
 
@@ -144,6 +144,8 @@ mergepr::_pr_message() {
   | awk "${markdown_for_commit_awk}"
 }
 
+# shellcheck disable=SC2016
+# We don't want to expand to expand expressions, so single quotes.
 markdown_for_commit_awk='
 # print_heading converts a heading starting with a hash to one with an
 # underline, as a line starting with a hash in a git commit message is
