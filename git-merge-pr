@@ -25,11 +25,23 @@ main() {
   set -u
   set -o pipefail
 
+  mergepr::read_config
   mergepr::setup "$@"
   mergepr::prepare
   mergepr::merge
   mergepr::push
   mergepr::clean
+}
+
+# Read the config variables used by this script. Set them with:
+# git config merge-pr.delete-remote-branch true
+# git config --local merge-pr.title-prefix ''
+# git config --global merge-pr.sleep-time-before-delete 10
+
+mergepr::read_config() {
+  mergepr::_get_config title_prefix title-prefix '✨ '
+  mergepr::_get_config delete_remote_branch delete-remote-branch true
+  mergepr::_get_config sleep_time_before_delete sleep-time-before-delete 15
 }
 
 mergepr::setup() {
@@ -98,24 +110,41 @@ mergepr::push() {
 
 mergepr::clean() {
   git branch -d "${merge_from_branch}" # delete local branch
-  # Wait before deleting branch, otherwise two gitsyncs run in parallel (the
-  # merge commit and the branch delete), and one fails due to repo locking
-  # on the remote end. This causes a spurious X as a bad commit check in github.
-  printf 'Waiting before deleting remote branch (15s)...\n'
-  sleep 15
-  # TODO(camh): figure out how to determine remote instead of assuming 'origin'
-  git push origin -d "${merge_from_branch}" # delete remote branch
+
+  if [[ "${delete_remote_branch}" == 'true' ]]; then
+
+    # Allow a delay before deleting the remote branch as some syncing programs
+    # try to sync the merge commit and the branch deletion in parallel, leaving
+    # one to fail, mucking up the github status.
+    if (( sleep_time_before_delete > 0 )); then
+      printf 'Waiting before deleting remote branch (%s)...\n' "${sleep_time_before_delete}"
+      sleep "${sleep_time_before_delete}"
+    fi
+
+    if remote=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null); then
+      remote=${remote%%/*}  # strip off branch name
+    else
+      remote='origin'  # default if tracking not set
+    fi
+    git push "${remote}" -d "${merge_from_branch}" # delete remote branch
+  fi
+}
+
+mergepr::_get_config() {
+  local var="$1" name="$2" default="$3"
+  local val
+  val=$(git config --get --default "${default}" merge-pr."${name}")
+  eval "${var}='${val}'"
 }
 
 mergepr::_merge_message() {
-  # Create default merge log message by making a title from the branch name,
-  # a gitmoji, and the PR number, then adding a short log of what's
-  # being merged and add a diff stat of the files changed by the merge.
-  gitmoji=':sparkles:'
+  # Create default merge log message by making a title prefix (from config),
+  # title from the branch name, and the PR number, then adding a short log of
+  # what is being merged and add a diff stat of the files changed by the merge.
   title="${merge_from_branch#feature/}" # strip of leading "feature/"
   title="${title//[-_]/ }" # convert _ and - to spaces
 cat <<EOF
-${gitmoji} Merge ${title} (#${pr_num})
+${title_prefix}Merge ${title} (#${pr_num})
 $(mergepr::_pr_message)
 
 $(git log --reverse --pretty=tformat:"* %s" "..${merge_from_branch}")
