@@ -160,6 +160,7 @@ EOF
 mergepr::_pr_message() {
   echo
   hub pr list -h "${merge_from_branch}" -f '%b' \
+  | tr -d \\015 \
   | awk "${markdown_for_commit_awk}"
 }
 
