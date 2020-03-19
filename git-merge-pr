@@ -172,11 +172,11 @@ markdown_for_commit_awk='
 # ignored.
 function print_heading(line)
 {
-  match(line, /^(##*) (.+)/, groups)
-  marker = length(groups[1]) == 1 ? "=" : "-"
-  heading = groups[2]
-  printf("%s\n", heading)
-  for (i = 0; i < length(heading); i++)
+  level1heading = match(line, /^# /) != 0
+  sub(/^##* /,"" , line)
+  marker = match(line, /^# /) != 0 ? "=" : "-"
+  printf("%s\n", line)
+  for (i = 0; i < length(line); i++)
     printf marker
   printf "\n"
 }
