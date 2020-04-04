@@ -1,0 +1,213 @@
+#!/bin/bash
+#
+# Merge and branch and push it to its remote, where the branch being merged
+# is for a GitHub Pull Request (PR).
+#
+# GitHub allows you to push a merge commit on a branch even when that branch
+# is protected, if that commit is the result of merging a PR and that PR is
+# suitable to be merged (all required checks have been satisfied, the required
+# number of approvals are present, the branch it up-to-date WRT the target
+# branch, etc). This feature allows you to operate from the command line
+# instead of needing to use the GitHub web-ui to close a PR.
+#
+# Usage: git pr-merge [branch]
+#
+# If [branch] is not supplied, the current branch will be merged into the
+# base branch for the PR. If [branch] is supplied, it is merged into the
+# base branch for the PR, regardless of what the current branch is.
+#
+# This scripts relies on the github `hub` tool to retrieve information
+# about the merge branch PR. It will fail if not installed. Install it
+# from https://github.com/github/hub.
+
+main() {
+  set -e
+  set -u
+  set -o pipefail
+
+  prmerge::read_config
+  prmerge::setup "$@"
+  prmerge::prepare
+  prmerge::merge
+  prmerge::push
+  prmerge::clean
+}
+
+# Read the config variables used by this script. Set them with:
+# git config pr.merge.delete-remote-branch true
+# git config --local pr.merge.title-prefix ''
+# git config --global pr.merge.sleep-time-before-delete 10
+
+prmerge::read_config() {
+  prmerge::_migrate_config
+  prmerge::_get_config title_prefix title-prefix '✨ '
+  prmerge::_get_config delete_remote_branch delete-remote-branch true
+  prmerge::_get_config sleep_time_before_delete sleep-time-before-delete 15
+}
+
+prmerge::setup() {
+  if ! command -v hub >/dev/null; then
+    printf 'You need to install hub (https://github.com/github/hub)\n' >&2
+    return 1
+  fi
+
+  if ! original_branch=$(git symbolic-ref --short --quiet HEAD); then
+    printf 'Not on a branch. Ignoring.\n' >&2
+    return 1
+  fi
+
+  # If given an argument, merge that branch. Otherwise merge the current branch
+  merge_from_branch="${1:-${original_branch}}"
+  if ! merge_to_branch=$(hub pr show -f '%B' -h "${merge_from_branch}"); then
+    printf 'Cannot get URL for pull request. Is there one?\n' >&2
+    return 1
+  fi
+
+  pr_num=$(hub pr show -f '%I' -h "${merge_from_branch}")
+
+  switch_needed=false
+  if [[ "${original_branch}" != "${merge_to_branch}" ]]; then
+    switch_needed=true
+  fi
+}
+
+prmerge::prepare() {
+  echo merging "${merge_from_branch}" to "${merge_to_branch}"
+
+  # Fetch from all remotes so we can check if local branch is up-to-date
+  git remote update >/dev/null
+
+  if [[ "$(git rev-parse "${merge_to_branch}")" != "$(git rev-parse "${merge_to_branch}@{upstream}")" ]]; then
+    printf '%s is not up-to-date. You should run:\n' "${merge_to_branch}" >&2
+    if "${switch_needed}"; then
+      printf '  git checkout %s\n' "${merge_to_branch}" >&2
+    fi
+    printf '  git pull\n' >&2
+    return 1
+  fi
+
+  if "${switch_needed}"; then
+    git checkout -q "${merge_to_branch}"
+  fi
+}
+
+prmerge::merge() {
+  #open 'https://gist.github.com/rxaviers/7360908'
+  #open 'https://gitmoji.carloscuesta.me'
+
+  if ! git merge --edit --no-ff -m "$(prmerge::_merge_message)" "${merge_from_branch}"; then
+    printf 'merge aborted\n' >&2
+    git merge --abort
+    if "${switch_needed}"; then
+      git checkout -q "${original_branch}"
+    fi
+    return 1
+  fi
+}
+
+prmerge::push() {
+  git push # push merge (closes PR)
+}
+
+prmerge::clean() {
+  git branch -d "${merge_from_branch}" # delete local branch
+
+  if [[ "${delete_remote_branch}" == 'true' ]]; then
+
+    # Allow a delay before deleting the remote branch as some syncing programs
+    # try to sync the merge commit and the branch deletion in parallel, leaving
+    # one to fail, mucking up the github status.
+    if (( sleep_time_before_delete > 0 )); then
+      printf 'Waiting before deleting remote branch (%s)...\n' "${sleep_time_before_delete}"
+      sleep "${sleep_time_before_delete}"
+    fi
+
+    if remote=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null); then
+      remote=${remote%%/*}  # strip off branch name
+    else
+      remote='origin'  # default if tracking not set
+    fi
+    git push "${remote}" -d "${merge_from_branch}" # delete remote branch
+  fi
+}
+
+prmerge::_migrate_config() {
+  git config --local --rename-section merge-pr pr.merge 2>/dev/null || true
+  git config --global --rename-section merge-pr pr.merge 2>/dev/null || true
+}
+
+prmerge::_get_config() {
+  local var="$1" name="$2" default="$3"
+  local val
+  val=$(git config --get --default "${default}" pr.merge."${name}")
+  eval "${var}='${val}'"
+}
+
+prmerge::_merge_message() {
+  # Create default merge log message by making a title prefix (from config),
+  # title from the branch name, and the PR number, then adding a short log of
+  # what is being merged and add a diff stat of the files changed by the merge.
+  title="${merge_from_branch#feature/}" # strip of leading "feature/"
+  title="${title//[-_]/ }" # convert _ and - to spaces
+cat <<EOF
+${title_prefix}Merge ${title} (#${pr_num})
+$(prmerge::_pr_message)
+
+$(git log --reverse --pretty=tformat:"* %s" "..${merge_from_branch}")
+
+$(git diff --no-color --stat "...${merge_from_branch}")
+
+# Gitmoji: https://gitmoji.carloscuesta.me
+# rxaviers list: https://gist.github.com/rxaviers/7360908
+#
+EOF
+}
+
+prmerge::_pr_message() {
+  echo
+  hub pr list -h "${merge_from_branch}" -f '%b' \
+  | tr -d \\015 \
+  | awk "${markdown_for_commit_awk}"
+}
+
+# shellcheck disable=SC2016
+# We don't want to expand to expand expressions, so single quotes.
+markdown_for_commit_awk='
+# print_heading converts a heading starting with a hash to one with an
+# underline, as a line starting with a hash in a git commit message is
+# ignored.
+function print_heading(line)
+{
+  level1heading = match(line, /^# /) != 0
+  sub(/^##* /,"" , line)
+  marker = match(line, /^# /) != 0 ? "=" : "-"
+  printf("%s\n", line)
+  for (i = 0; i < length(line); i++)
+    printf marker
+  printf "\n"
+}
+
+# If we want a blank and the current line is not blank, inject a blank line.
+/\S/ && want_blank { print "" }
+{ want_blank = 0 }
+
+# Lines starting with one or more hashes, followed by a space and one more
+# char at least are headings. Convert to underline headings.
+/^##* .+/ { print_heading($0); next }
+
+# Convert triple-backtick code blocks to indented code blocks. Ensure there
+# is a blank line before and after the block, but dont add extra unnecessary
+# blank lines.
+/^\s*```/ {
+  in_code_block = !in_code_block
+  want_blank = !last_blank
+  next
+}
+
+# Print other lines, indenting code blocks
+{
+  last_blank = (gsub(/^\s*$/, "") > 0)
+  printf("%s%s\n", in_code_block ? "    " : "", $0)
+}'
+
+[[ "$(caller)" != 0\ * ]] || main "$@" # Run main if file not sourced
