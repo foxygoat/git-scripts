@@ -1,0 +1,67 @@
+#!/bin/bash
+#
+# Create a new git repository, initialised "properly"
+#-----------------------------------------------------------------------------
+usage() {
+  printf 'Usage: %s <repo-name>\n' "${0##*/}"
+}
+
+#-----------------------------------------------------------------------------
+main() {
+  set -e
+  if (( $# != 1 )); then
+    printf 'Missing repo name\n' >&2
+    usage >&2
+    exit 1
+  fi
+
+  new::read_config
+  new::create_repo "$1"
+  new::create_remote_repo "$1"
+}
+
+#-----------------------------------------------------------------------------
+# Config value taken from git-config(1) if present
+use_github=false
+github_owner=''
+
+new::read_config() {
+  new::_get_config use_github use-github
+  new::_get_config github_owner github-owner
+}
+
+new::create_repo() {
+  local repo="$1"
+  git init "${repo}"
+  cd "${repo}"
+  <<EOM fmt -72 | git commit --allow-empty -F -
+🌱 Initialise Repository
+
+Create an empty commit to initialise the repository so that rebase and
+similar commands operate consistently with a parent commit.
+EOM
+}
+
+new::create_remote_repo() {
+  local repo="$1"
+
+  [[ "${use_github}" == true ]] || return 0
+  if [[ -z "${github_owner}" ]]; then
+    github_owner="$(hub api https://api.github.com/user | jq -r .login)"
+  fi
+
+  hub create "${github_owner}/${repo}"
+  git remote set-url origin "https://github.com/${github_owner}/${repo}"
+  git push -u
+}
+
+new::_get_config() {
+  local var="$1" name="$2"
+  local val
+  if val=$(git config --get new."${name}"); then
+    eval "${var}='${val}'"
+  fi
+}
+
+#-----------------------------------------------------------------------------
+[[ "$(caller)" != 0\ * ]] || main "$@"
