@@ -39,6 +39,7 @@ main() {
 # git config --global pr.merge.sleep-time-before-delete 10
 
 prmerge::read_config() {
+  declare -g title_prefix delete_remote_branch sleep_time_before_delete
   prmerge::_migrate_config
   prmerge::_get_config title_prefix title-prefix '✨ '
   prmerge::_get_config delete_remote_branch delete-remote-branch true
