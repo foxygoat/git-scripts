@@ -3,7 +3,7 @@
 # Create a new git repository, initialised "properly"
 #-----------------------------------------------------------------------------
 usage() {
-  printf 'Usage: %s <repo-name>\n' "${0##*/}"
+  printf 'Usage: %s %s [owner/]<repo-name>\n' "${0##*/}"
 }
 
 #-----------------------------------------------------------------------------
@@ -31,7 +31,7 @@ new::read_config() {
 }
 
 new::create_repo() {
-  local repo="$1"
+  local repo="${1##*/}"
   git init "${repo}"
   cd "${repo}"
   <<EOM fmt -72 | git commit --allow-empty -F -
@@ -43,10 +43,13 @@ EOM
 }
 
 new::create_remote_repo() {
-  local repo="$1"
+  local owner="${1%%/*}"
+  local repo="${1##*/}"
 
   [[ "${use_github}" == true ]] || return 0
-  if [[ -z "${github_owner}" ]]; then
+  if [[ -n "${owner}" ]]; then
+    github_owner="${owner}"
+  elif [[ -z "${github_owner}" ]]; then
     github_owner="$(hub api https://api.github.com/user | jq -r .login)"
   fi
 
