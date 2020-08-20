@@ -38,16 +38,15 @@ main() {
 # git config --local pr.merge.title-prefix ''
 # git config --global pr.merge.sleep-time-before-delete 10
 
-# Pre-declare config variables so shellcheck can see it.
-title_prefix=''
-delete_remote_branch=''
-sleep_time_before_delete=''
+title_prefix='✨ '
+delete_remote_branch='true'
+sleep_time_before_delete='15'
 
 prmerge::read_config() {
   prmerge::_migrate_config
-  prmerge::_get_config title_prefix title-prefix '✨ '
-  prmerge::_get_config delete_remote_branch delete-remote-branch true
-  prmerge::_get_config sleep_time_before_delete sleep-time-before-delete 15
+  prmerge::_get_config title_prefix title-prefix
+  prmerge::_get_config delete_remote_branch delete-remote-branch
+  prmerge::_get_config sleep_time_before_delete sleep-time-before-delete
 }
 
 prmerge::setup() {
@@ -142,10 +141,11 @@ prmerge::_migrate_config() {
 }
 
 prmerge::_get_config() {
-  local var="$1" name="$2" default="$3"
+  local var="$1" name="$2"
   local val
-  val=$(git config --get --default "${default}" pr.merge."${name}")
-  eval "${var}='${val}'"
+  if val=$(git config --get pr.merge."${name}"); then
+    eval "${var}='${val}'"
+  fi
 }
 
 prmerge::_merge_message() {
