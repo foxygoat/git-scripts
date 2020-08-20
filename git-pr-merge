@@ -63,11 +63,9 @@ prmerge::setup() {
   # If given an argument, merge that branch. Otherwise merge the current branch
   merge_from_branch="${1:-${original_branch}}"
   if ! merge_to_branch=$(hub pr show -f '%B' -h "${merge_from_branch}"); then
-    printf 'Cannot get URL for pull request. Is there one?\n' >&2
+    printf 'Cannot get base branch for pull request. Is there a PR?\n' >&2
     return 1
   fi
-
-  pr_num=$(hub pr show -f '%I' -h "${merge_from_branch}")
 
   switch_needed=false
   if [[ "${original_branch}" != "${merge_to_branch}" ]]; then
@@ -99,7 +97,8 @@ prmerge::merge() {
   #open 'https://gist.github.com/rxaviers/7360908'
   #open 'https://gitmoji.carloscuesta.me'
 
-  if ! git merge --edit --no-ff -m "$(prmerge::_merge_message)" "${merge_from_branch}"; then
+  merge_message="$(prmerge::_merge_message "${merge_from_branch}" "${merge_to_branch}")"
+  if ! git merge --edit --no-ff -m "${merge_message}" "${merge_from_branch}"; then
     printf 'merge aborted\n' >&2
     git merge --abort
     if "${switch_needed}"; then
@@ -149,18 +148,25 @@ prmerge::_get_config() {
 }
 
 prmerge::_merge_message() {
+  local from_branch="$1"
+  local to_branch="$2"
   # Create default merge log message by making a title prefix (from config),
-  # title from the branch name, and the PR number, then adding a short log of
+  # title from the PR title and the PR number, then adding a short log of
   # what is being merged and add a diff stat of the files changed by the merge.
-  title="${merge_from_branch#feature/}" # strip of leading "feature/"
-  title="${title//[-_]/ }" # convert _ and - to spaces
+  title="$(hub pr show -f '%t' -h "${from_branch}")"
+  pr_num="$(hub pr show -f '%I' -h "${from_branch}")"
+  pr_url="$(hub pr show -f '%U' -h "${from_branch}")"
+
 cat <<EOF
-${title_prefix}Merge ${title} (#${pr_num})
-$(prmerge::_pr_message)
+${title_prefix}${title} (#${pr_num})
+$(prmerge::_pr_message "${from_branch}")
 
-$(git log --reverse --pretty=tformat:"* %s" "..${merge_from_branch}")
+This merges the following commits:
+$(git log --reverse --pretty=tformat:"* %s" "${to_branch}..${from_branch}")
 
-$(git diff --no-color --stat "...${merge_from_branch}")
+$(git diff --no-color --stat=72 "${to_branch}...${from_branch}" | sed 's/^/    /')
+
+Pull-Request: ${pr_url}
 
 # Gitmoji: https://gitmoji.carloscuesta.me
 # rxaviers list: https://gist.github.com/rxaviers/7360908
@@ -169,8 +175,9 @@ EOF
 }
 
 prmerge::_pr_message() {
+  local from_branch="$1"
   echo
-  hub pr list -h "${merge_from_branch}" -f '%b' \
+  hub pr show -f '%b' -h "${from_branch}" \
   | tr -d \\015 \
   | awk "${markdown_for_commit_awk}"
 }
