@@ -191,8 +191,8 @@ markdown_for_commit_awk='
 function print_heading(line)
 {
   level1heading = match(line, /^# /) != 0
-  sub(/^##* /,"" , line)
-  marker = match(line, /^# /) != 0 ? "=" : "-"
+  sub(/^##* /, "", line)
+  marker = level1heading ? "=" : "-"
   printf("%s\n", line)
   for (i = 0; i < length(line); i++)
     printf marker
