@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Merge and branch and push it to its remote, where the branch being merged
+# Merge a branch and push it to its remote, where the branch being merged
 # is for a GitHub Pull Request (PR).
 #
 # GitHub allows you to push a merge commit on a branch even when that branch
@@ -88,6 +88,13 @@ prmerge::prepare() {
     return 1
   fi
 
+  # cd to root of repo as merge_to_branch may not contain CWD, but switch back
+  # when we're done.
+  # shellcheck disable=SC2064
+  # We want to evaluate $(pwd) now and not later.
+  trap "cd \"$(pwd)\"" EXIT
+  cd "$(git rev-parse --show-toplevel)"
+
   if "${switch_needed}"; then
     git checkout -q "${merge_to_branch}"
   fi
@@ -130,7 +137,10 @@ prmerge::clean() {
     else
       remote='origin'  # default if tracking not set
     fi
-    git push "${remote}" -d "${merge_from_branch}" # delete remote branch
+    if ! git push "${remote}" --delete "${merge_from_branch}"; then
+      echo 'Perhaps GitHub already deleted the branch? Disable deletion with:'
+      echo 'git config pr.merge.delete-remote-branch false'
+    fi
   fi
 }
 
