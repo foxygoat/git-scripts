@@ -88,6 +88,13 @@ prmerge::prepare() {
     return 1
   fi
 
+  # cd to root of repo as merge_to_branch may not contain CWD, but switch back
+  # when we're done.
+  # shellcheck disable=SC2064
+  # We want to evaluate $(pwd) now and not later.
+  trap "cd \"$(pwd)\"" EXIT
+  cd "$(git rev-parse --show-toplevel)"
+
   if "${switch_needed}"; then
     git checkout -q "${merge_to_branch}"
   fi
