@@ -1,24 +1,23 @@
 #!/bin/bash
 #
-# Merge a branch and push it to its remote, where the branch being merged
-# is for a GitHub Pull Request (PR).
+# Merge a branch and push it to its remote, where the branch being merged is
+# for a GitHub Pull Request (PR).
 #
-# GitHub allows you to push a merge commit on a branch even when that branch
-# is protected, if that commit is the result of merging a PR and that PR is
+# GitHub allows you to push a merge commit on a branch even when that branch is
+# protected, if that commit is the result of merging a PR and that PR is
 # suitable to be merged (all required checks have been satisfied, the required
 # number of approvals are present, the branch it up-to-date WRT the target
 # branch, etc). This feature allows you to operate from the command line
 # instead of needing to use the GitHub web-ui to close a PR.
 #
-# Usage: git pr-merge [branch]
+# Usage: git pr-merge
 #
-# If [branch] is not supplied, the current branch will be merged into the
-# base branch for the PR. If [branch] is supplied, it is merged into the
-# base branch for the PR, regardless of what the current branch is.
+# Merges the current "feature" branch into the base "master" branch specified
+# on the PR for the current branch.
 #
-# This scripts relies on the github `hub` tool to retrieve information
-# about the merge branch PR. It will fail if not installed. Install it
-# from https://github.com/github/hub.
+# This scripts relies on the github `hub` tool to retrieve information about
+# the merge branch PR. It will fail if not installed. Install it from
+# https://github.com/github/hub.
 
 main() {
   set -e
@@ -55,62 +54,49 @@ prmerge::setup() {
     return 1
   fi
 
-  if ! original_branch=$(git symbolic-ref --short --quiet HEAD); then
+  if ! feature=$(git symbolic-ref --short --quiet HEAD); then
     printf 'Not on a branch. Ignoring.\n' >&2
     return 1
   fi
 
-  # If given an argument, merge that branch. Otherwise merge the current branch
-  merge_from_branch="${1:-${original_branch}}"
-  if ! merge_to_branch=$(hub pr show -f '%B' -h "${merge_from_branch}"); then
+  if ! master=$(hub pr show -f '%B' -h "${feature}"); then
     printf 'Cannot get base branch for pull request. Is there a PR?\n' >&2
     return 1
-  fi
-
-  switch_needed=false
-  if [[ "${original_branch}" != "${merge_to_branch}" ]]; then
-    switch_needed=true
   fi
 }
 
 prmerge::prepare() {
-  echo merging "${merge_from_branch}" to "${merge_to_branch}"
+  echo merging "${feature}" to "${master}"
 
   # Fetch from all remotes so we can check if local branch is up-to-date
   git remote update >/dev/null
 
-  if [[ "$(git rev-parse "${merge_to_branch}")" != "$(git rev-parse "${merge_to_branch}@{upstream}")" ]]; then
-    printf '%s is not up-to-date. You should run:\n' "${merge_to_branch}" >&2
-    if "${switch_needed}"; then
-      printf '  git checkout %s\n' "${merge_to_branch}" >&2
-    fi
+  if [[ "$(git rev-parse "${master}")" != "$(git rev-parse "${master}@{upstream}")" ]]; then
+    printf '%s is not up-to-date. You should run:\n' "${master}" >&2
+    printf '  git checkout %s\n' "${master}" >&2
     printf '  git pull\n' >&2
     return 1
   fi
 
-  # cd to root of repo as merge_to_branch may not contain CWD, but switch back
+  # cd to root of repo as master may not contain CWD, but switch back
   # when we're done.
   # shellcheck disable=SC2064
   # We want to evaluate $(pwd) now and not later.
   trap "cd \"$(pwd)\"" EXIT
   cd "$(git rev-parse --show-toplevel)"
 
-  if "${switch_needed}"; then
-    git checkout -q "${merge_to_branch}"
-  fi
+  git checkout -q "${master}"
 }
 
 prmerge::merge() {
   #open 'https://gist.github.com/rxaviers/7360908'
   #open 'https://gitmoji.carloscuesta.me'
 
-  merge_message="$(prmerge::_merge_message "${merge_from_branch}" "${merge_to_branch}")"
-  if ! git merge --edit --no-ff -m "${merge_message}" "${merge_from_branch}"; then
+  merge_message="$(prmerge::_merge_message "${feature}" "${master}")"
+  if ! git merge --edit --no-ff -m "${merge_message}" "${feature}"; then
     printf 'merge aborted\n' >&2
     git merge --abort
-    if "${switch_needed}"; then
-      git checkout -q "${original_branch}"
-    fi
+    git checkout -q "${feature}"
     return 1
   fi
 }
@@ -120,7 +106,7 @@ prmerge::push() {
 }
 
 prmerge::clean() {
-  git branch -d "${merge_from_branch}" # delete local branch
+  git branch -d "${feature}" # delete local branch
 
   if [[ "${delete_remote_branch}" == 'true' ]]; then
 
@@ -137,7 +123,7 @@ prmerge::clean() {
     else
       remote='origin'  # default if tracking not set
     fi
-    if ! git push "${remote}" --delete "${merge_from_branch}"; then
+    if ! git push "${remote}" --delete "${feature}"; then
       echo 'Perhaps GitHub already deleted the branch? Disable deletion with:'
       echo 'git config pr.merge.delete-remote-branch false'
     fi
