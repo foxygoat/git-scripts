@@ -1,36 +1,85 @@
 #!/bin/bash
 #
-# Merge a branch and push it to its remote, where the branch being merged
-# is for a GitHub Pull Request (PR).
+# Merge and update branches for GitHub Pull Requests (PRs).
 #
-# GitHub allows you to push a merge commit on a branch even when that branch
-# is protected, if that commit is the result of merging a PR and that PR is
+# Usage: git <pr-merge|pr-update>
+#
+# git pr-merge
+# ------------
+# Merge the current "feature" branch into the base "master" branch and push
+# to GitHub, closing the PR.
+#
+# GitHub allows you to push a merge commit on a branch even when that branch is
+# protected, if that commit is the result of merging a PR and that PR is
 # suitable to be merged (all required checks have been satisfied, the required
-# number of approvals are present, the branch it up-to-date WRT the target
+# number of approvals are present, the branch is up-to-date WRT the target
 # branch, etc). This feature allows you to operate from the command line
-# instead of needing to use the GitHub web-ui to close a PR.
+# instead of needing to use the GitHub web-ui to merge and close a PR.
 #
-# Usage: git pr-merge [branch]
+# git pr-update
+# -------------
+# Update the current "feature" branch by merging the base "master" branch
+# into it, ready for merging with "git pr-merge".
 #
-# If [branch] is not supplied, the current branch will be merged into the
-# base branch for the PR. If [branch] is supplied, it is merged into the
-# base branch for the PR, regardless of what the current branch is.
+# If you have "Require branches to be up-to-date" on branch protection, you
+# cannot merge a PR if the base "master" branch has moved on from where the
+# feature branch was branched from master. The GitHub UI has an "Update Branch"
+# button that merges master into the branch, which gets it up-to-date from the
+# base branch, but the merge commit added to the branch is a "back merge". If
+# that is fast-forward merged into master, you end up with a "foxtrot" merge
+# where the first parent is the feature branch, not the master branch, breaking
+# `git log --first-parent`. If you do a merge commit back into master, you end
+# up with merges going back and forth between master and feature branches,
+# making a mess of your history. Neither is ideal.
 #
-# This scripts relies on the github `hub` tool to retrieve information
-# about the merge branch PR. It will fail if not installed. Install it
-# from https://github.com/github/hub.
+# When run as "git pr-update", this script will create a merge commit from
+# master on the head of the feature branch, but that commit will have the
+# correct order of parents and a complete merge commit message such that it
+# can be fast-forward merged into master. This will allow CI to run on the
+# result of merging master as the branch will be up-to-date, but no foxtrot
+# or criss-cross merges will occur. If the head commit is already a merge
+# commit from this script, it will be removed before re-merging so as to
+# not have a bunch of unnecessary merges.
+#
+# Requirements
+# ------------
+# This scripts relies on the github `hub` tool to retrieve information about
+# the merge branch PR. It will fail if not installed. Install it from
+# https://github.com/github/hub.
 
 main() {
   set -e
   set -u
   set -o pipefail
 
-  prmerge::read_config
-  prmerge::setup "$@"
+  case "${0##*/}" in
+    git-pr-merge | git-merge-pr)
+      prmerge "$@"
+      ;;
+    git-pr-update)
+      prupdate "$@"
+      ;;
+    *)
+      printf 'Unknown command name: %s\n' "$0" >&2
+      exit 1
+      ;;
+  esac
+}
+
+prmerge() {
+  common::read_config
+  common::setup "$@"
   prmerge::prepare
   prmerge::merge
   prmerge::push
   prmerge::clean
+}
+
+prupdate() {
+  common::read_config
+  common::setup "$@"
+  prupdate::prepare
+  prupdate::update
 }
 
 # Read the config variables used by this script. Set them with:
@@ -42,77 +91,157 @@ title_prefix='✨ '
 delete_remote_branch='true'
 sleep_time_before_delete='15'
 
-prmerge::read_config() {
-  prmerge::_migrate_config
-  prmerge::_get_config title_prefix title-prefix
-  prmerge::_get_config delete_remote_branch delete-remote-branch
-  prmerge::_get_config sleep_time_before_delete sleep-time-before-delete
+common::read_config() {
+  common::migrate_config
+  common::get_config title_prefix title-prefix
+  common::get_config delete_remote_branch delete-remote-branch
+  common::get_config sleep_time_before_delete sleep-time-before-delete
 }
 
-prmerge::setup() {
+common::setup() {
   if ! command -v hub >/dev/null; then
     printf 'You need to install hub (https://github.com/github/hub)\n' >&2
     return 1
   fi
 
-  if ! original_branch=$(git symbolic-ref --short --quiet HEAD); then
+  if ! feature=$(git symbolic-ref --short --quiet HEAD); then
     printf 'Not on a branch. Ignoring.\n' >&2
     return 1
   fi
 
-  # If given an argument, merge that branch. Otherwise merge the current branch
-  merge_from_branch="${1:-${original_branch}}"
-  if ! merge_to_branch=$(hub pr show -f '%B' -h "${merge_from_branch}"); then
+  if ! master=$(hub pr show -f '%B' -h "${feature}"); then
     printf 'Cannot get base branch for pull request. Is there a PR?\n' >&2
     return 1
   fi
-
-  switch_needed=false
-  if [[ "${original_branch}" != "${merge_to_branch}" ]]; then
-    switch_needed=true
-  fi
 }
 
-prmerge::prepare() {
-  echo merging "${merge_from_branch}" to "${merge_to_branch}"
-
-  # Fetch from all remotes so we can check if local branch is up-to-date
-  git remote update >/dev/null
-
-  if [[ "$(git rev-parse "${merge_to_branch}")" != "$(git rev-parse "${merge_to_branch}@{upstream}")" ]]; then
-    printf '%s is not up-to-date. You should run:\n' "${merge_to_branch}" >&2
-    if "${switch_needed}"; then
-      printf '  git checkout %s\n' "${merge_to_branch}" >&2
-    fi
-    printf '  git pull\n' >&2
-    return 1
-  fi
-
-  # cd to root of repo as merge_to_branch may not contain CWD, but switch back
+common::prepare() {
+  # cd to root of repo as master may not contain CWD, but switch back
   # when we're done.
   # shellcheck disable=SC2064
   # We want to evaluate $(pwd) now and not later.
   trap "cd \"$(pwd)\"" EXIT
   cd "$(git rev-parse --show-toplevel)"
 
-  if "${switch_needed}"; then
-    git checkout -q "${merge_to_branch}"
+  # Fetch from all remotes so we can check if local branch is up-to-date
+  git remote update >/dev/null
+}
+
+prmerge::prepare() {
+  common::prepare
+
+  local do_pull=false
+  if [[ "$(git rev-parse "${master}")" != "$(git rev-parse "${master}@{upstream}")" ]]; then
+    printf '\n%s is not up-to-date. To update, press enter (^C to abort):' "${master}"
+    read -r
+    do_pull=true
+  fi
+
+  git checkout -q "${master}"
+
+  if "${do_pull}"; then
+    git pull
+    if ! git merge-base --is-ancestor "${master}" "${feature}"; then
+      git checkout "${feature}"
+      printf 'Local %s is now up-to-date. Update %s before merging\n' "${master}" "${feature}"
+      exit 1
+    fi
   fi
 }
 
+prupdate::prepare() {
+  common::prepare
+
+  if git merge-base --is-ancestor "${master}@{upstream}" "${feature}"; then
+    printf 'Already up to date\n'
+    exit 0
+  fi
+
+  # If we create an update-merge and push that to the feature branch, GitHub
+  # shows the commits from master as well as the feature branch on the PR.
+  # It also removes any approval which may have been grated. This defeats the
+  # purpose of pushing an update merge - the point is to retain approval.
+  #
+  # Through experimentation, we have determined that if you push a foxtrot
+  # update merge, GitHub updates the PRs base.sha field, which is what is
+  # necessary to not have GitHub show the commits on master on the PR. You
+  # can then remove that merge commit and force push it, which leaves the
+  # base.sha updated, and it does not remove approval. The PR/branch is
+  # then read to receive a proper update merge commit successfully.
+  #
+  # If the head commit on the branch is an update merge we have previously
+  # put there, prepare the branch by removing it, so there is only ever one
+  # merge commit on the branch. Otherwise, perform the steps described above
+  # (push and remove a foxtrot update merge), so we can push a proper
+  # update merge without dropping approval on the PR.
+  read -ra parents < <(git show --no-patch --format='%P' "${feature}" --)
+  if (( ${#parents[@]} == 2 )) && git merge-base --is-ancestor "${master}" "${parents[0]}"; then
+    printf '\nHEAD looks to be a previous git-pr-update merge commit.\n'
+    read -r -p 'Will first undo this (reset, force-push). Press enter (^C to abort):'
+    printf '\nRemoving previous update merge\n'
+    git reset --hard @^2
+  else
+    printf '\nCreating bogus foxtrot merge\n'
+    git merge --no-edit --no-ff "${master}@{upstream}"
+    printf '\nPushing bogus foxtrot merge\n'
+    git push
+    printf '\nRemoving bogus foxtrot merge\n'
+    git reset --hard @^1
+  fi
+
+  printf '\nForce pushing merge removal\n'
+  git push --force
+}
+
 prmerge::merge() {
+  echo merging "${feature}" to "${master}"
+
   #open 'https://gist.github.com/rxaviers/7360908'
   #open 'https://gitmoji.carloscuesta.me'
 
-  merge_message="$(prmerge::_merge_message "${merge_from_branch}" "${merge_to_branch}")"
-  if ! git merge --edit --no-ff -m "${merge_message}" "${merge_from_branch}"; then
+  # If the feature branch has been updated with git-pr-update, then the head
+  # of the feature branch will be a merge commit that has the master branch
+  # as the first parent. In that case, just fast-forward merge instead of
+  # creating a merge commit.
+  read -ra parents < <(git show --no-patch --format='%P' "${feature}" --)
+  master_hash=$(git rev-parse "${master}")
+  if (( ${#parents[@]} == 2 )) && [[ "${parents[0]}" == "${master_hash}" ]]; then
+    git merge --ff --no-edit "${feature}"
+    return
+  fi
+
+  merge_message="$(common::merge_message "${feature}" "${master}")"
+  if ! git merge --edit --no-ff -m "${merge_message}" "${feature}"; then
     printf 'merge aborted\n' >&2
     git merge --abort
-    if "${switch_needed}"; then
-      git checkout -q "${original_branch}"
-    fi
+    git checkout -q "${feature}"
     return 1
   fi
+}
+
+prupdate::update() {
+  echo updating "${feature}" from "${master}"
+
+  # Create a temporary branch from ${master} so we can merge the
+  # feature branch into it.
+  local tmpmaster="prupdate/${feature}"
+  git branch --force "${tmpmaster}" "${master}@{upstream}"
+  git checkout -q "${tmpmaster}"
+
+  merge_message="$(common::merge_message "${feature}" "${tmpmaster}")"
+  if ! git merge --edit --no-ff -m "${merge_message}" "${feature}"; then
+    printf 'merge aborted\n' >&2
+    git merge --abort
+    git checkout -q "${feature}"
+    git branch -D "${tmpmaster}"
+    return 1
+  fi
+
+  # reset feature branch to updated feature branch
+  git checkout -q "${feature}"
+  git reset --hard "${tmpmaster}"
+  git branch -D "${tmpmaster}"
+  git push
 }
 
 prmerge::push() {
@@ -120,7 +249,7 @@ prmerge::push() {
 }
 
 prmerge::clean() {
-  git branch -d "${merge_from_branch}" # delete local branch
+  git branch -d "${feature}" # delete local branch
 
   if [[ "${delete_remote_branch}" == 'true' ]]; then
 
@@ -137,19 +266,19 @@ prmerge::clean() {
     else
       remote='origin'  # default if tracking not set
     fi
-    if ! git push "${remote}" --delete "${merge_from_branch}"; then
+    if ! git push "${remote}" --delete "${feature}"; then
       echo 'Perhaps GitHub already deleted the branch? Disable deletion with:'
       echo 'git config pr.merge.delete-remote-branch false'
     fi
   fi
 }
 
-prmerge::_migrate_config() {
+common::migrate_config() {
   git config --local --rename-section merge-pr pr.merge 2>/dev/null || true
   git config --global --rename-section merge-pr pr.merge 2>/dev/null || true
 }
 
-prmerge::_get_config() {
+common::get_config() {
   local var="$1" name="$2"
   local val
   if val=$(git config --get pr.merge."${name}"); then
@@ -157,7 +286,7 @@ prmerge::_get_config() {
   fi
 }
 
-prmerge::_merge_message() {
+common::merge_message() {
   local from_branch="$1"
   local to_branch="$2"
   # Create default merge log message by making a title prefix (from config),
@@ -169,7 +298,7 @@ prmerge::_merge_message() {
 
 cat <<EOF
 ${title_prefix}${title} (#${pr_num})
-$(prmerge::_pr_message "${from_branch}")
+$(common::pr_message "${from_branch}")
 
 This merges the following commits:
 $(git log --reverse --pretty=tformat:"* %s" "${to_branch}..${from_branch}")
@@ -184,7 +313,7 @@ Pull-Request: ${pr_url}
 EOF
 }
 
-prmerge::_pr_message() {
+common::pr_message() {
   local from_branch="$1"
   echo
   hub pr show -f '%b' -h "${from_branch}" \
