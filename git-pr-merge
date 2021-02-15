@@ -86,16 +86,19 @@ prupdate() {
 # git config pr.merge.delete-remote-branch true
 # git config --local pr.merge.title-prefix ''
 # git config --global pr.merge.sleep-time-before-delete 10
+# git config --local pr.merge.squash true
 
 title_prefix='✨ '
 delete_remote_branch='true'
 sleep_time_before_delete='15'
+squash_merge='false'
 
 common::read_config() {
   common::migrate_config
   common::get_config title_prefix title-prefix
   common::get_config delete_remote_branch delete-remote-branch
   common::get_config sleep_time_before_delete sleep-time-before-delete
+  common::get_config squash_merge squash
 }
 
 common::setup() {
@@ -113,6 +116,10 @@ common::setup() {
     printf 'Cannot get base branch for pull request. Is there a PR?\n' >&2
     return 1
   fi
+
+  title="$(hub pr show -f '%t' -h "${feature}")"
+  pr_num="$(hub pr show -f '%I' -h "${feature}")"
+  pr_url="$(hub pr show -f '%U' -h "${feature}")"
 }
 
 common::prepare() {
@@ -194,6 +201,14 @@ prupdate::prepare() {
 }
 
 prmerge::merge() {
+  if "${squash_merge}"; then
+    prmerge::squash_merge
+  else
+    prmerge::local_merge
+  fi
+}
+
+prmerge::local_merge() {
   echo merging "${feature}" to "${master}"
 
   #open 'https://gist.github.com/rxaviers/7360908'
@@ -217,6 +232,41 @@ prmerge::merge() {
     git checkout -q "${feature}"
     return 1
   fi
+}
+
+prmerge::squash_merge() {
+  echo squash merging "${feature}" to "${master}"
+  commit_msg_file=$(mktemp "git-prmerge.${pr_num}.XXXXXXXXX")
+  # shellcheck disable=SC2064
+  trap "rm ${commit_msg_file}" EXIT
+
+  common::merge_message "${feature}" "${master}" > "${commit_msg_file}"
+  common::editor "${commit_msg_file}"
+  if ! grep -E -q -v -e '^[[:space:]]*(#|$)' "${commit_msg_file}"; then
+    printf 'no commit message. merge aborted\n'
+    git checkout -q "${feature}"
+    return 1
+  fi
+  local commit_title commit_message
+  commit_title=$(grep -v '^[[:space:]]*#' "${commit_msg_file}" | head -n 1)
+  commit_message=$(grep -v '^[[:space:]]*#' "${commit_msg_file}" | tail -n +3)
+
+  local result
+  if ! result=$(hub api --method PUT \
+    --header 'Accept: application/vnd.github.v3+json' \
+    --raw-field "commit_title=${commit_title}" \
+    --raw-field "commit_message=${commit_message}"$'\n' \
+    --raw-field "sha=$(git rev-parse "${feature}")" \
+    --raw-field "merge_method=squash" \
+    "/repos/{owner}/{repo}/pulls/${pr_num}/merge"
+  ); then
+    jq -r .message <<<"${result}"
+    git checkout -q "${feature}"
+    return 1
+  fi
+
+  # Fetch the new merge commit
+  git pull
 }
 
 prupdate::update() {
@@ -245,11 +295,16 @@ prupdate::update() {
 }
 
 prmerge::push() {
-  git push # push merge (closes PR)
+  if ! "${squash_merge}"; then
+    git push # push merge (closes PR)
+  fi
 }
 
 prmerge::clean() {
-  git branch -d "${feature}" # delete local branch
+  # Branches merged on github will appear unmerged locally. Force delete
+  local delete
+  "${squash_merge}" && delete=-D || delete=-d
+  git branch "${delete}" "${feature}" # delete local branch
 
   if [[ "${delete_remote_branch}" == 'true' ]]; then
 
@@ -286,25 +341,42 @@ common::get_config() {
   fi
 }
 
+common::editor() {
+  local e
+  if ! e=$(git config --get core.editor); then
+    e=${VISUAL:-${EDITOR:-vi}}
+  fi
+
+  $e "$@"
+}
+
 common::merge_message() {
   local from_branch="$1"
   local to_branch="$2"
   # Create default merge log message by making a title prefix (from config),
   # title from the PR title and the PR number, then adding a short log of
   # what is being merged and add a diff stat of the files changed by the merge.
-  title="$(hub pr show -f '%t' -h "${from_branch}")"
-  pr_num="$(hub pr show -f '%I' -h "${from_branch}")"
-  pr_url="$(hub pr show -f '%U' -h "${from_branch}")"
 
 cat <<EOF
 ${title_prefix}${title} (#${pr_num})
 $(common::pr_message "${from_branch}")
 
+EOF
+
+# Don't include the commit titles or diff stat if squash merging - it doesn't
+# make sense, because usually there are fixup commits with irrelevant titles
+# and the diff stat can be easily shown with `git log --stat=72 ...`.
+if ! "${squash_merge}"; then
+  cat <<EOF
 This merges the following commits:
 $(git log --reverse --pretty=tformat:"* %s" "${to_branch}..${from_branch}")
 
 $(git diff --no-color --stat=72 "${to_branch}...${from_branch}" | sed 's/^/    /')
 
+EOF
+fi
+
+cat <<EOF
 Pull-Request: ${pr_url}
 
 # Gitmoji: https://gitmoji.carloscuesta.me
