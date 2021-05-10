@@ -16,7 +16,7 @@
 # branches you have created in this repo. But if you are reworking the
 # commits, that is likely.
 
-branch="${1:-master}"
+branch="${1:-$(git config --get --default master init.defaultBranch)}"
 fork_point=$(git merge-base --fork-point "${branch}")
 num_commits=$(git rev-list --count "${fork_point}"..)
 now=$(date +%s)
