@@ -306,6 +306,12 @@ prmerge::clean() {
   "${squash_merge}" && delete=-D || delete=-d
   git branch "${delete}" "${feature}" # delete local branch
 
+  if remote=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null); then
+    remote=${remote%%/*}  # strip off branch name
+  else
+    remote='origin'  # default if tracking not set
+  fi
+
   if [[ "${delete_remote_branch}" == 'true' ]]; then
 
     # Allow a delay before deleting the remote branch as some syncing programs
@@ -316,15 +322,13 @@ prmerge::clean() {
       sleep "${sleep_time_before_delete}"
     fi
 
-    if remote=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null); then
-      remote=${remote%%/*}  # strip off branch name
-    else
-      remote='origin'  # default if tracking not set
-    fi
     if ! git push "${remote}" --delete "${feature}"; then
       echo 'Perhaps GitHub already deleted the branch? Disable deletion with:'
       echo 'git config pr.merge.delete-remote-branch false'
     fi
+  else
+    # Assume the remote branch is automatically deleted. Prune remote refs.
+    git remote prune "${remote}"
   fi
 }
 
