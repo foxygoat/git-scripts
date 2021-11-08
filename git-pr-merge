@@ -83,6 +83,11 @@ by running with "-s" or by setting the git comfig setting:
 
   git config pr.merge.squash true
 
+You can have single commit PRs squash merged and multi-commit PRs merged
+with a merge commit by setting the git config setting:
+
+  git config pr.merge.squash-singles true
+
 The title of the merge commit can have a prefix prepended to the title,
 which by default is "✨ ". It can be overridden by a git config setting:
 
@@ -119,11 +124,13 @@ prupdate() {
 # git config pr.merge.delete-remote-branch false
 # git config --global pr.merge.sleep-time-before-delete 10
 # git config pr.merge.squash true
+# git config pr.merge.squash-singles true
 
 title_prefix='✨ '
 delete_remote_branch='true'
 sleep_time_before_delete='15'
 squash_merge='false'
+squash_singles='false'
 
 common::read_config() {
   common::migrate_config
@@ -131,6 +138,7 @@ common::read_config() {
   common::get_config delete_remote_branch delete-remote-branch
   common::get_config sleep_time_before_delete sleep-time-before-delete
   common::get_config squash_merge squash
+  common::get_config squash_singles squash-singles
 }
 
 prmerge::parse_args() {
@@ -183,6 +191,12 @@ common::setup() {
   title="$(hub pr show -f '%t' -h "${feature}")"
   pr_num="$(hub pr show -f '%I' -h "${feature}")"
   pr_url="$(hub pr show -f '%U' -h "${feature}")"
+
+  if [[ "${squash_singles}" == 'true' && "${squash_merge}" == 'false' ]]; then
+    if [[ "$(git rev-list --count "${feature}" "^${master}")" == 1 ]]; then
+      squash_merge=true
+    fi
+  fi
 }
 
 common::prepare() {
