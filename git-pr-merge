@@ -53,7 +53,7 @@ main() {
   set -o pipefail
 
   case "${0##*/}" in
-    git-pr-merge | git-merge-pr)
+    git-pr-merge)
       prmerge "$@"
       ;;
     git-pr-update)
@@ -133,7 +133,6 @@ squash_merge='false'
 squash_singles='false'
 
 common::read_config() {
-  common::migrate_config
   common::get_config title_prefix title-prefix
   common::get_config delete_remote_branch delete-remote-branch
   common::get_config sleep_time_before_delete sleep-time-before-delete
@@ -408,11 +407,6 @@ prmerge::clean() {
     # Assume the remote branch is automatically deleted. Prune remote refs.
     git remote prune "${remote}"
   fi
-}
-
-common::migrate_config() {
-  git config --local --rename-section merge-pr pr.merge 2>/dev/null || true
-  git config --global --rename-section merge-pr pr.merge 2>/dev/null || true
 }
 
 common::get_config() {
