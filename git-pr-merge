@@ -66,9 +66,41 @@ main() {
   esac
 }
 
+prmerge::usage() {
+  cat <<EOF
+Usage: ${0##*/} {<options>...}
+  -m    Merge PR with a merge commit (overrides git-config)
+  -s    Merge PR with a squash merge (overrides git-config)
+
+${0##*/} merges the current branch's GitHub pull request (PR) to the base
+branch of the PR, using the PR description as the merge commit message along
+with a diff stat and a one-line log of the commits in the PR. The markdown
+in the PR description is cleaned up a little to be more suitable for a git
+commit message.
+
+By default a merge commit is created, but the PR can be squash-merged
+by running with "-s" or by setting the git comfig setting:
+
+  git config pr.merge.squash true
+
+The title of the merge commit can have a prefix prepended to the title,
+which by default is "✨ ". It can be overridden by a git config setting:
+
+  git config pr.merge.title-prefix ''
+
+After merging, the PR branch is automatically deleted both locally and on the
+remote. This can be changed with the git config setting:
+
+  git config pr.merge.delete-remote-branch false
+
+EOF
+}
+
 prmerge() {
+  args=()
   common::read_config
-  common::setup "$@"
+  prmerge::parse_args "$@"
+  common::setup "${args[@]}"
   prmerge::prepare
   prmerge::merge
   prmerge::push
@@ -99,6 +131,37 @@ common::read_config() {
   common::get_config delete_remote_branch delete-remote-branch
   common::get_config sleep_time_before_delete sleep-time-before-delete
   common::get_config squash_merge squash
+}
+
+prmerge::parse_args() {
+  OPTSTRING=':hms'
+  while getopts "${OPTSTRING}" opt; do
+    case "${opt}" in
+      h)
+        prmerge::usage
+        exit 0
+        ;;
+      m)
+        squash_merge='false'
+        ;;
+      s)
+        squash_merge='true'
+        ;;
+      \?)
+        printf 'Invalid option: -%s\n\n' "${OPTARG}" >&2
+        usage >&2
+        exit 1
+        ;;
+      :)
+        printf 'Option -%s requires an argument\n\n' "${OPTARG}" >&2
+        usage >&2
+        exit 1
+        ;;
+    esac
+  done
+  shift $((OPTIND-1))
+
+  args=("$@")
 }
 
 common::setup() {
