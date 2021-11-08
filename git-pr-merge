@@ -82,11 +82,11 @@ prupdate() {
   prupdate::update
 }
 
-# Read the config variables used by this script. Set them with:
-# git config pr.merge.delete-remote-branch true
-# git config --local pr.merge.title-prefix ''
+# Read the config variables used by this script. For example, set them with:
+# git config pr.merge.title-prefix ''
+# git config pr.merge.delete-remote-branch false
 # git config --global pr.merge.sleep-time-before-delete 10
-# git config --local pr.merge.squash true
+# git config pr.merge.squash true
 
 title_prefix='✨ '
 delete_remote_branch='true'
