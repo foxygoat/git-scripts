@@ -312,16 +312,17 @@ prmerge::clean() {
     remote='origin'  # default if tracking not set
   fi
 
+  # Allow a delay before deleting the remote branch as some syncing programs
+  # try to sync the merge commit and the branch deletion in parallel, leaving
+  # one to fail, mucking up the github status. This delay is also used to wait
+  # before pruning remote branches as automatic delete on merge does not
+  # usually happen immediately.
+  if (( sleep_time_before_delete > 0 )); then
+    printf 'Waiting before deleting/pruning remote branch (%s)...\n' "${sleep_time_before_delete}"
+    sleep "${sleep_time_before_delete}"
+  fi
+
   if [[ "${delete_remote_branch}" == 'true' ]]; then
-
-    # Allow a delay before deleting the remote branch as some syncing programs
-    # try to sync the merge commit and the branch deletion in parallel, leaving
-    # one to fail, mucking up the github status.
-    if (( sleep_time_before_delete > 0 )); then
-      printf 'Waiting before deleting remote branch (%s)...\n' "${sleep_time_before_delete}"
-      sleep "${sleep_time_before_delete}"
-    fi
-
     if ! git push "${remote}" --delete "${feature}"; then
       echo 'Perhaps GitHub already deleted the branch? Disable deletion with:'
       echo 'git config pr.merge.delete-remote-branch false'
