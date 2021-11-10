@@ -43,9 +43,9 @@
 #
 # Requirements
 # ------------
-# This scripts relies on the github `hub` tool to retrieve information about
+# This scripts relies on the github `gh` tool to retrieve information about
 # the merge branch PR. It will fail if not installed. Install it from
-# https://github.com/github/hub.
+# https://github.com/cli/cli.
 
 main() {
   set -e
@@ -172,8 +172,8 @@ prmerge::parse_args() {
 }
 
 common::setup() {
-  if ! command -v hub >/dev/null; then
-    printf 'You need to install hub (https://github.com/github/hub)\n' >&2
+  if ! command -v gh >/dev/null; then
+    printf 'You need to install gh (https://github.com/cli/cli)\n' >&2
     return 1
   fi
 
@@ -182,14 +182,15 @@ common::setup() {
     return 1
   fi
 
-  if ! master=$(hub pr show -f '%B' -h "${feature}"); then
+  # TODO(camh): Combine multiple `gh pr view` calls into one
+  if ! master=$(gh pr view --json baseRefName -q .baseRefName "${feature}"); then
     printf 'Cannot get base branch for pull request. Is there a PR?\n' >&2
     return 1
   fi
 
-  title="$(hub pr show -f '%t' -h "${feature}")"
-  pr_num="$(hub pr show -f '%I' -h "${feature}")"
-  pr_url="$(hub pr show -f '%U' -h "${feature}")"
+  title="$(gh pr view --json title -q .title "${feature}")"
+  pr_num="$(gh pr view --json number -q .number "${feature}")"
+  pr_url="$(gh pr view --json url -q .url "${feature}")"
 
   if [[ "${squash_singles}" == 'true' && "${squash_merge}" == 'false' ]]; then
     if [[ "$(git rev-list --count "${feature}" "^${master}")" == 1 ]]; then
@@ -323,20 +324,8 @@ prmerge::squash_merge() {
     git checkout -q "${feature}"
     return 1
   fi
-  local commit_title commit_message
-  commit_title=$(grep -v '^[[:space:]]*#' "${commit_msg_file}" | head -n 1)
-  commit_message=$(grep -v '^[[:space:]]*#' "${commit_msg_file}" | tail -n +3)
 
-  local result
-  if ! result=$(hub api --method PUT \
-    --header 'Accept: application/vnd.github.v3+json' \
-    --raw-field "commit_title=${commit_title}" \
-    --raw-field "commit_message=${commit_message}"$'\n' \
-    --raw-field "sha=$(git rev-parse "${feature}")" \
-    --raw-field "merge_method=squash" \
-    "/repos/{owner}/{repo}/pulls/${pr_num}/merge"
-  ); then
-    jq -r .message <<<"${result}"
+  if ! gh pr merge "${pr_num}" --squash --body-file "${commit_msg_file}"; then
     git checkout -q "${feature}"
     return 1
   fi
@@ -464,7 +453,7 @@ EOF
 common::pr_message() {
   local from_branch="$1"
   echo
-  hub pr show -f '%b' -h "${from_branch}" \
+  gh pr view --json body -q .body "${from_branch}" \
   | tr -d \\015 \
   | awk "${markdown_for_commit_awk}"
 }
