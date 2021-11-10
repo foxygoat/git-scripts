@@ -324,8 +324,20 @@ prmerge::squash_merge() {
     git checkout -q "${feature}"
     return 1
   fi
+  local commit_title commit_message
+  commit_title=$(grep -v '^[[:space:]]*#' "${commit_msg_file}" | head -n 1)
+  commit_message=$(grep -v '^[[:space:]]*#' "${commit_msg_file}" | tail -n +3)
 
-  if ! gh pr merge "${pr_num}" --squash --body-file "${commit_msg_file}"; then
+  local result
+  if ! result=$(gh api "repos/{owner}/{repo}/pulls/${pr_num}/merge" \
+    --method PUT \
+    --header 'Accept: application/vnd.github.v3+json' \
+    --raw-field "commit_title=${commit_title}" \
+    --raw-field "commit_message=${commit_message}"$'\n' \
+    --raw-field "sha=$(git rev-parse "${feature}")" \
+    --raw-field "merge_method=squash"
+  ); then
+    jq -r .message <<<"${result}"
     git checkout -q "${feature}"
     return 1
   fi
