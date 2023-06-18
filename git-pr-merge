@@ -542,4 +542,5 @@ function print_heading(line)
   printf("%s%s\n", in_code_block ? "    " : "", $0)
 }'
 
-[[ "$(caller)" != 0\ * ]] || main "$@" # Run main if file not sourced
+# Only run main if executed as a script and not sourced.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then main "$@"; fi
