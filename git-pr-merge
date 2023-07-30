@@ -503,7 +503,7 @@ common::pr_message() {
 }
 
 # shellcheck disable=SC2016
-# We don't want to expand to expand expressions, so single quotes.
+# We don't want to expand shell expressions (it's awk!), so single quotes.
 markdown_for_commit_awk='
 # print_heading converts a heading starting with a hash to one with an
 # underline, as a line starting with a hash in a git commit message is
@@ -518,6 +518,11 @@ function print_heading(line)
     printf marker
   printf "\n"
 }
+
+# If there is a triple dash line --- preceded by a blank line, throw
+# it out and everything after it. These are reviewer notes and do not
+# go into the commit message.
+/^---$/ && last_blank { exit }
 
 # If we want a blank and the current line is not blank, inject a blank line.
 /\S/ && want_blank { print "" }
@@ -542,4 +547,5 @@ function print_heading(line)
   printf("%s%s\n", in_code_block ? "    " : "", $0)
 }'
 
-[[ "$(caller)" != 0\ * ]] || main "$@" # Run main if file not sourced
+# Only run main if executed as a script and not sourced.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then main "$@"; fi
