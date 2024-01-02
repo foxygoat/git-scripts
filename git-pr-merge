@@ -51,26 +51,26 @@
 # https://github.com/cli/cli.
 
 main() {
-  set -e
-  set -u
-  set -o pipefail
+	set -e
+	set -u
+	set -o pipefail
 
-  case "${0##*/}" in
-    git-pr-merge)
-      prmerge "$@"
-      ;;
-    git-pr-update)
-      prupdate "$@"
-      ;;
-    *)
-      printf 'Unknown command name: %s\n' "$0" >&2
-      exit 1
-      ;;
-  esac
+	case "${0##*/}" in
+	git-pr-merge)
+		prmerge "$@"
+		;;
+	git-pr-update)
+		prupdate "$@"
+		;;
+	*)
+		printf 'Unknown command name: %s\n' "$0" >&2
+		exit 1
+		;;
+	esac
 }
 
 prmerge::usage() {
-  cat <<EOF
+	cat <<EOF
 Usage: ${0##*/} {<options>...}
   -m    Merge PR with a merge commit (overrides git-config)
   -p NN Merge PR <NN> instead of the current branch
@@ -107,20 +107,20 @@ EOF
 }
 
 prmerge() {
-  args=()
-  common::read_config
-  prmerge::parse_args "$@"
-  common::setup ${args[@]+"${args[@]}"}
-  prmerge::prepare
-  prmerge::merge
-  prmerge::clean
+	args=()
+	common::read_config
+	prmerge::parse_args "$@"
+	common::setup ${args[@]+"${args[@]}"}
+	prmerge::prepare
+	prmerge::merge
+	prmerge::clean
 }
 
 prupdate() {
-  common::read_config
-  common::setup "$@"
-  prupdate::prepare
-  prupdate::update
+	common::read_config
+	common::setup "$@"
+	prupdate::prepare
+	prupdate::update
 }
 
 # Read the config variables used by this script. For example, set them with:
@@ -138,354 +138,355 @@ squash_merge='false'
 squash_singles='false'
 
 common::read_config() {
-  common::get_config title_prefix title-prefix
-  common::get_config delete_remote_branch delete-remote-branch
-  common::get_config sleep_time_before_delete sleep-time-before-delete
-  common::get_config squash_merge squash
-  common::get_config squash_singles squash-singles
+	common::get_config title_prefix title-prefix
+	common::get_config delete_remote_branch delete-remote-branch
+	common::get_config sleep_time_before_delete sleep-time-before-delete
+	common::get_config squash_merge squash
+	common::get_config squash_singles squash-singles
 }
 
 prmerge::parse_args() {
-  OPTSTRING=':hmp:s'
-  while getopts "${OPTSTRING}" opt; do
-    case "${opt}" in
-      h)
-        prmerge::usage
-        exit 0
-        ;;
-      m)
-        squash_merge='false'
-        ;;
-      p)
-        cli_pr_num="${OPTARG}"
-        ;;
-      s)
-        squash_merge='true'
-        ;;
-      \?)
-        printf 'Invalid option: -%s\n\n' "${OPTARG}" >&2
-        usage >&2
-        exit 1
-        ;;
-      :)
-        printf 'Option -%s requires an argument\n\n' "${OPTARG}" >&2
-        usage >&2
-        exit 1
-        ;;
-    esac
-  done
-  shift $((OPTIND-1))
+	OPTSTRING=':hmp:s'
+	while getopts "${OPTSTRING}" opt; do
+		case "${opt}" in
+		h)
+			prmerge::usage
+			exit 0
+			;;
+		m)
+			squash_merge='false'
+			;;
+		p)
+			cli_pr_num="${OPTARG}"
+			;;
+		s)
+			squash_merge='true'
+			;;
+		\?)
+			printf 'Invalid option: -%s\n\n' "${OPTARG}" >&2
+			usage >&2
+			exit 1
+			;;
+		:)
+			printf 'Option -%s requires an argument\n\n' "${OPTARG}" >&2
+			usage >&2
+			exit 1
+			;;
+		esac
+	done
+	shift $((OPTIND - 1))
 
-  args=("$@")
+	args=("$@")
 }
 
 common::setup() {
-  if ! command -v gh >/dev/null; then
-    printf 'You need to install gh (https://github.com/cli/cli)\n' >&2
-    return 1
-  fi
+	if ! command -v gh >/dev/null; then
+		printf 'You need to install gh (https://github.com/cli/cli)\n' >&2
+		return 1
+	fi
 
-  # If called with a PR number, check out that PR using `gh`. This is used
-  # when merging someone elses PR (either from a fork or you just dont have
-  # the local branch).
-  if [[ -n "${cli_pr_num}" ]]; then
-    if ! gh pr checkout "${cli_pr_num}"; then
-      printf 'Could not checkout PR#%s\n' "${cli_pr_num}"
-      return 1
-    fi
-  fi
+	# If called with a PR number, check out that PR using `gh`. This is used
+	# when merging someone elses PR (either from a fork or you just dont have
+	# the local branch).
+	if [[ -n "${cli_pr_num}" ]]; then
+		if ! gh pr checkout "${cli_pr_num}"; then
+			printf 'Could not checkout PR#%s\n' "${cli_pr_num}"
+			return 1
+		fi
+	fi
 
-  if ! feature=$(git symbolic-ref --short --quiet HEAD); then
-    printf 'Not on a branch. Ignoring.\n' >&2
-    return 1
-  fi
+	if ! feature=$(git symbolic-ref --short --quiet HEAD); then
+		printf 'Not on a branch. Ignoring.\n' >&2
+		return 1
+	fi
 
-  if [[ -n "${cli_pr_num}" ]]; then
-    pr_ref="${cli_pr_num}"
-  else
-    pr_ref="${feature}"
-  fi
+	if [[ -n "${cli_pr_num}" ]]; then
+		pr_ref="${cli_pr_num}"
+	else
+		pr_ref="${feature}"
+	fi
 
-  # TODO(camh): Combine multiple `gh pr view` calls into one
-  # gh pr view --json baseRefName,title,number,url \
-  #   -q '"master=\(.baseRefName|@sh)\ntitle=\(.title|@sh)\npr_num=\(.number|@sh)\npr_url=\(.url|@sh)"'
-  # gh pr view --json baseRefName,title,number,url -q 'to_entries[] | "\(.key)=\(.value|@sh)"'
-  if ! master=$(gh pr view --json baseRefName -q .baseRefName "${pr_ref}"); then
-    printf 'Cannot get base branch for pull request. Is there a PR?\n' >&2
-    return 1
-  fi
+	# TODO(camh): Combine multiple `gh pr view` calls into one
+	# gh pr view --json baseRefName,title,number,url \
+	#   -q '"master=\(.baseRefName|@sh)\ntitle=\(.title|@sh)\npr_num=\(.number|@sh)\npr_url=\(.url|@sh)"'
+	# gh pr view --json baseRefName,title,number,url -q 'to_entries[] | "\(.key)=\(.value|@sh)"'
+	if ! master=$(gh pr view --json baseRefName -q .baseRefName "${pr_ref}"); then
+		printf 'Cannot get base branch for pull request. Is there a PR?\n' >&2
+		return 1
+	fi
 
-  title="$(gh pr view --json title -q .title "${pr_ref}")"
-  pr_num="$(gh pr view --json number -q .number "${pr_ref}")"
-  pr_url="$(gh pr view --json url -q .url "${pr_ref}")"
+	title="$(gh pr view --json title -q .title "${pr_ref}")"
+	pr_num="$(gh pr view --json number -q .number "${pr_ref}")"
+	pr_url="$(gh pr view --json url -q .url "${pr_ref}")"
 
-  if [[ "${squash_singles}" == 'true' && "${squash_merge}" == 'false' ]]; then
-    if [[ "$(git rev-list --count "${feature}" "^${master}")" == 1 ]]; then
-      squash_merge=true
-    fi
-  fi
+	if [[ "${squash_singles}" == 'true' && "${squash_merge}" == 'false' ]]; then
+		if [[ "$(git rev-list --count "${feature}" "^${master}")" == 1 ]]; then
+			squash_merge=true
+		fi
+	fi
 }
 
 common::prepare() {
-  # cd to root of repo as master may not contain CWD, but switch back
-  # when we're done.
-  # shellcheck disable=SC2064
-  # We want to evaluate $(pwd) now and not later.
-  trap "cd \"$(pwd)\"" EXIT
-  cd "$(git rev-parse --show-toplevel)"
+	# cd to root of repo as master may not contain CWD, but switch back
+	# when we're done.
+	# shellcheck disable=SC2064
+	# We want to evaluate $(pwd) now and not later.
+	trap "cd \"$(pwd)\"" EXIT
+	cd "$(git rev-parse --show-toplevel)"
 
-  # Fetch from all remotes so we can check if local branch is up-to-date
-  git remote update >/dev/null
+	# Fetch from all remotes so we can check if local branch is up-to-date
+	git remote update >/dev/null
 }
 
 prmerge::prepare() {
-  common::prepare
+	common::prepare
 
-  local do_pull=false
-  if [[ "$(git rev-parse "${master}")" != "$(git rev-parse "${master}@{upstream}")" ]]; then
-    printf '\n%s is not up-to-date. To update, press enter (^C to abort):' "${master}"
-    read -r
-    do_pull=true
-  fi
+	local do_pull=false
+	if [[ "$(git rev-parse "${master}")" != "$(git rev-parse "${master}@{upstream}")" ]]; then
+		printf '\n%s is not up-to-date. To update, press enter (^C to abort):' "${master}"
+		read -r
+		do_pull=true
+	fi
 
-  git checkout -q "${master}"
+	git checkout -q "${master}"
 
-  if "${do_pull}"; then
-    git pull
-    if ! git merge-base --is-ancestor "${master}" "${feature}"; then
-      # If we are merging via PR number and not a local branch, delete the branch we
-      # created with `gh pr checkout` earlier. This will leave us on master.
-      if [[ -n "${cli_pr_num}" ]]; then
-        git branch -d "${feature}"
-      else
-        git checkout "${feature}"
-      fi
-      printf 'Local %s is not up-to-date. Update %s before merging\n' "${master}" "${feature}"
-      exit 1
-    fi
-  fi
+	if "${do_pull}"; then
+		git pull
+		if ! git merge-base --is-ancestor "${master}" "${feature}"; then
+			# If we are merging via PR number and not a local branch, delete the branch we
+			# created with `gh pr checkout` earlier. This will leave us on master.
+			if [[ -n "${cli_pr_num}" ]]; then
+				git branch -d "${feature}"
+			else
+				git checkout "${feature}"
+			fi
+			printf 'Local %s is not up-to-date. Update %s before merging\n' "${master}" "${feature}"
+			exit 1
+		fi
+	fi
 }
 
 prupdate::prepare() {
-  common::prepare
+	common::prepare
 
-  if git merge-base --is-ancestor "${master}@{upstream}" "${feature}"; then
-    printf 'Already up to date\n'
-    exit 0
-  fi
+	if git merge-base --is-ancestor "${master}@{upstream}" "${feature}"; then
+		printf 'Already up to date\n'
+		exit 0
+	fi
 
-  # If we create an update-merge and push that to the feature branch, GitHub
-  # shows the commits from master as well as the feature branch on the PR.
-  # It also removes any approval which may have been grated. This defeats the
-  # purpose of pushing an update merge - the point is to retain approval.
-  #
-  # Through experimentation, we have determined that if you push a foxtrot
-  # update merge, GitHub updates the PRs base.sha field, which is what is
-  # necessary to not have GitHub show the commits on master on the PR. You
-  # can then remove that merge commit and force push it, which leaves the
-  # base.sha updated, and it does not remove approval. The PR/branch is
-  # then read to receive a proper update merge commit successfully.
-  #
-  # If the head commit on the branch is an update merge we have previously
-  # put there, prepare the branch by removing it, so there is only ever one
-  # merge commit on the branch. Otherwise, perform the steps described above
-  # (push and remove a foxtrot update merge), so we can push a proper
-  # update merge without dropping approval on the PR.
-  read -ra parents < <(git show --no-patch --format='%P' "${feature}" --)
-  if (( ${#parents[@]} == 2 )) && git merge-base --is-ancestor "${master}" "${parents[0]}"; then
-    printf '\nHEAD looks to be a previous git-pr-update merge commit.\n'
-    read -r -p 'Will first undo this (reset, force-push). Press enter (^C to abort):'
-    printf '\nRemoving previous update merge\n'
-    git reset --hard @^2
-  else
-    printf '\nCreating bogus foxtrot merge\n'
-    git merge --no-edit --no-ff "${master}@{upstream}"
-    printf '\nPushing bogus foxtrot merge\n'
-    git push
-    printf '\nRemoving bogus foxtrot merge\n'
-    git reset --hard @^1
-  fi
+	# If we create an update-merge and push that to the feature branch, GitHub
+	# shows the commits from master as well as the feature branch on the PR.
+	# It also removes any approval which may have been grated. This defeats the
+	# purpose of pushing an update merge - the point is to retain approval.
+	#
+	# Through experimentation, we have determined that if you push a foxtrot
+	# update merge, GitHub updates the PRs base.sha field, which is what is
+	# necessary to not have GitHub show the commits on master on the PR. You
+	# can then remove that merge commit and force push it, which leaves the
+	# base.sha updated, and it does not remove approval. The PR/branch is
+	# then read to receive a proper update merge commit successfully.
+	#
+	# If the head commit on the branch is an update merge we have previously
+	# put there, prepare the branch by removing it, so there is only ever one
+	# merge commit on the branch. Otherwise, perform the steps described above
+	# (push and remove a foxtrot update merge), so we can push a proper
+	# update merge without dropping approval on the PR.
+	read -ra parents < <(git show --no-patch --format='%P' "${feature}" --)
+	if ((${#parents[@]} == 2)) && git merge-base --is-ancestor "${master}" "${parents[0]}"; then
+		printf '\nHEAD looks to be a previous git-pr-update merge commit.\n'
+		read -r -p 'Will first undo this (reset, force-push). Press enter (^C to abort):'
+		printf '\nRemoving previous update merge\n'
+		git reset --hard @^2
+	else
+		printf '\nCreating bogus foxtrot merge\n'
+		git merge --no-edit --no-ff "${master}@{upstream}"
+		printf '\nPushing bogus foxtrot merge\n'
+		git push
+		printf '\nRemoving bogus foxtrot merge\n'
+		git reset --hard @^1
+	fi
 
-  printf '\nForce pushing merge removal\n'
-  git push --force
+	printf '\nForce pushing merge removal\n'
+	git push --force
 }
 
 prmerge::merge() {
-  if "${squash_merge}"; then
-    prmerge::squash_merge
-  else
-    prmerge::local_merge
-  fi
+	if "${squash_merge}"; then
+		prmerge::squash_merge
+	else
+		prmerge::local_merge
+	fi
 }
 
 prmerge::local_merge() {
-  echo merging "${feature}" to "${master}"
+	echo merging "${feature}" to "${master}"
 
-  #open 'https://gist.github.com/rxaviers/7360908'
-  #open 'https://gitmoji.carloscuesta.me'
+	#open 'https://gist.github.com/rxaviers/7360908'
+	#open 'https://gitmoji.carloscuesta.me'
 
-  # If the feature branch has been updated with git-pr-update, then the head
-  # of the feature branch will be a merge commit that has the master branch
-  # as the first parent. In that case, just fast-forward merge instead of
-  # creating a merge commit.
-  read -ra parents < <(git show --no-patch --format='%P' "${feature}" --)
-  master_hash=$(git rev-parse "${master}")
-  if (( ${#parents[@]} == 2 )) && [[ "${parents[0]}" == "${master_hash}" ]]; then
-    git merge --ff --no-edit "${feature}"
-  else
-    merge_message="$(common::merge_message "${feature}" "${master}" "${pr_ref}")"
-    if ! git merge --edit --no-ff -m "${merge_message}" "${feature}"; then
-      printf 'merge aborted\n' >&2
-      git merge --abort
-      git checkout -q "${feature}"
-      return 1
-    fi
-  fi
+	# If the feature branch has been updated with git-pr-update, then the head
+	# of the feature branch will be a merge commit that has the master branch
+	# as the first parent. In that case, just fast-forward merge instead of
+	# creating a merge commit.
+	read -ra parents < <(git show --no-patch --format='%P' "${feature}" --)
+	master_hash=$(git rev-parse "${master}")
+	if ((${#parents[@]} == 2)) && [[ "${parents[0]}" == "${master_hash}" ]]; then
+		git merge --ff --no-edit "${feature}"
+	else
+		merge_message="$(common::merge_message "${feature}" "${master}" "${pr_ref}")"
+		if ! git merge --edit --no-ff -m "${merge_message}" "${feature}"; then
+			printf 'merge aborted\n' >&2
+			git merge --abort
+			git checkout -q "${feature}"
+			return 1
+		fi
+	fi
 
-  # Pushing the merge commit will merge the PR with a merge commit, both
-  # for local changes and PRs of forked repos when merged by PR num
-  # (-p flag).
-  git push
+	# Pushing the merge commit will merge the PR with a merge commit, both
+	# for local changes and PRs of forked repos when merged by PR num
+	# (-p flag).
+	git push
 }
 
 prmerge::squash_merge() {
-  echo squash merging "${feature}" to "${master}"
-  commit_msg_file=$(mktemp "git-prmerge.${pr_num}.XXXXXXXXX")
-  # shellcheck disable=SC2064
-  trap "rm ${commit_msg_file}" EXIT
+	echo squash merging "${feature}" to "${master}"
+	commit_msg_file=$(mktemp "git-prmerge.${pr_num}.XXXXXXXXX")
+	# shellcheck disable=SC2064
+	trap "rm ${commit_msg_file}" EXIT
 
-  common::merge_message "${feature}" "${master}" "${pr_ref}" > "${commit_msg_file}"
-  common::editor "${commit_msg_file}"
-  if ! grep -E -q -v -e '^[[:space:]]*(#|$)' "${commit_msg_file}"; then
-    printf 'no commit message. merge aborted\n'
-    git checkout -q "${feature}"
-    return 1
-  fi
-  local commit_title commit_message
-  commit_title=$(grep -v '^[[:space:]]*#' "${commit_msg_file}" | head -n 1)
-  commit_message=$(grep -v '^[[:space:]]*#' "${commit_msg_file}" | tail -n +3)
+	common::merge_message "${feature}" "${master}" "${pr_ref}" >"${commit_msg_file}"
+	common::editor "${commit_msg_file}"
+	if ! grep -E -q -v -e '^[[:space:]]*(#|$)' "${commit_msg_file}"; then
+		printf 'no commit message. merge aborted\n'
+		git checkout -q "${feature}"
+		return 1
+	fi
+	local commit_title commit_message
+	commit_title=$(grep -v '^[[:space:]]*#' "${commit_msg_file}" | head -n 1)
+	commit_message=$(grep -v '^[[:space:]]*#' "${commit_msg_file}" | tail -n +3)
 
-  local result
-  if ! result=$(gh api "repos/{owner}/{repo}/pulls/${pr_num}/merge" \
-    --method PUT \
-    --header 'Accept: application/vnd.github.v3+json' \
-    --raw-field "commit_title=${commit_title}" \
-    --raw-field "commit_message=${commit_message}"$'\n' \
-    --raw-field "sha=$(git rev-parse "${feature}")" \
-    --raw-field "merge_method=squash"
-  ); then
-    jq -r .message <<<"${result}"
-    git checkout -q "${feature}"
-    return 1
-  fi
+	local result
+	if ! result=$(
+		gh api "repos/{owner}/{repo}/pulls/${pr_num}/merge" \
+			--method PUT \
+			--header 'Accept: application/vnd.github.v3+json' \
+			--raw-field "commit_title=${commit_title}" \
+			--raw-field "commit_message=${commit_message}"$'\n' \
+			--raw-field "sha=$(git rev-parse "${feature}")" \
+			--raw-field "merge_method=squash"
+	); then
+		jq -r .message <<<"${result}"
+		git checkout -q "${feature}"
+		return 1
+	fi
 
-  # Fetch the new merge commit
-  git pull
+	# Fetch the new merge commit
+	git pull
 }
 
 prupdate::update() {
-  echo updating "${feature}" from "${master}"
+	echo updating "${feature}" from "${master}"
 
-  # Create a temporary branch from ${master} so we can merge the
-  # feature branch into it.
-  local tmpmaster="prupdate/${feature}"
-  git branch --force "${tmpmaster}" "${master}@{upstream}"
-  git checkout -q "${tmpmaster}"
+	# Create a temporary branch from ${master} so we can merge the
+	# feature branch into it.
+	local tmpmaster="prupdate/${feature}"
+	git branch --force "${tmpmaster}" "${master}@{upstream}"
+	git checkout -q "${tmpmaster}"
 
-  merge_message="$(common::merge_message "${feature}" "${tmpmaster}" "${pr_ref}")"
-  if ! git merge --edit --no-ff -m "${merge_message}" "${feature}"; then
-    printf 'merge aborted\n' >&2
-    git merge --abort
-    git checkout -q "${feature}"
-    git branch -D "${tmpmaster}"
-    return 1
-  fi
+	merge_message="$(common::merge_message "${feature}" "${tmpmaster}" "${pr_ref}")"
+	if ! git merge --edit --no-ff -m "${merge_message}" "${feature}"; then
+		printf 'merge aborted\n' >&2
+		git merge --abort
+		git checkout -q "${feature}"
+		git branch -D "${tmpmaster}"
+		return 1
+	fi
 
-  # reset feature branch to updated feature branch
-  git checkout -q "${feature}"
-  git reset --hard "${tmpmaster}"
-  git branch -D "${tmpmaster}"
-  git push
+	# reset feature branch to updated feature branch
+	git checkout -q "${feature}"
+	git reset --hard "${tmpmaster}"
+	git branch -D "${tmpmaster}"
+	git push
 }
 
 prmerge::clean() {
-  # Branches merged on github will appear unmerged locally. Force delete
-  local delete
-  "${squash_merge}" && delete=-D || delete=-d
-  git branch "${delete}" "${feature}" # delete local branch
+	# Branches merged on github will appear unmerged locally. Force delete
+	local delete
+	"${squash_merge}" && delete=-D || delete=-d
+	git branch "${delete}" "${feature}" # delete local branch
 
-  if remote=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null); then
-    remote=${remote%%/*}  # strip off branch name
-  else
-    remote='origin'  # default if tracking not set
-  fi
+	if remote=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null); then
+		remote=${remote%%/*} # strip off branch name
+	else
+		remote='origin' # default if tracking not set
+	fi
 
-  # Allow a delay before deleting the remote branch as some syncing programs
-  # try to sync the merge commit and the branch deletion in parallel, leaving
-  # one to fail, mucking up the github status. This delay is also used to wait
-  # before pruning remote branches as automatic delete on merge does not
-  # usually happen immediately.
-  if (( sleep_time_before_delete > 0 )); then
-    printf 'Waiting before deleting/pruning remote branch (%s)...\n' "${sleep_time_before_delete}"
-    sleep "${sleep_time_before_delete}"
-  fi
+	# Allow a delay before deleting the remote branch as some syncing programs
+	# try to sync the merge commit and the branch deletion in parallel, leaving
+	# one to fail, mucking up the github status. This delay is also used to wait
+	# before pruning remote branches as automatic delete on merge does not
+	# usually happen immediately.
+	if ((sleep_time_before_delete > 0)); then
+		printf 'Waiting before deleting/pruning remote branch (%s)...\n' "${sleep_time_before_delete}"
+		sleep "${sleep_time_before_delete}"
+	fi
 
-  if [[ "${delete_remote_branch}" == 'true' ]]; then
-    if ! git push "${remote}" --delete "${feature}"; then
-      echo 'Perhaps GitHub already deleted the branch? Disable deletion with:'
-      echo 'git config pr.merge.delete-remote-branch false'
-    fi
-  else
-    # Assume the remote branch is automatically deleted. Prune remote refs.
-    git remote prune "${remote}"
-  fi
+	if [[ "${delete_remote_branch}" == 'true' ]]; then
+		if ! git push "${remote}" --delete "${feature}"; then
+			echo 'Perhaps GitHub already deleted the branch? Disable deletion with:'
+			echo 'git config pr.merge.delete-remote-branch false'
+		fi
+	else
+		# Assume the remote branch is automatically deleted. Prune remote refs.
+		git remote prune "${remote}"
+	fi
 }
 
 common::get_config() {
-  local var="$1" name="$2"
-  local val
-  if val=$(git config --get pr.merge."${name}"); then
-    eval "${var}='${val}'"
-  fi
+	local var="$1" name="$2"
+	local val
+	if val=$(git config --get pr.merge."${name}"); then
+		eval "${var}='${val}'"
+	fi
 }
 
 common::editor() {
-  local e
-  if ! e=$(git config --get core.editor); then
-    e=${VISUAL:-${EDITOR:-vi}}
-  fi
+	local e
+	if ! e=$(git config --get core.editor); then
+		e=${VISUAL:-${EDITOR:-vi}}
+	fi
 
-  $e "$@"
+	$e "$@"
 }
 
 common::merge_message() {
-  local from_branch="$1"
-  local to_branch="$2"
-  local pr_ref="$3"
-  # Create default merge log message by making a title prefix (from config),
-  # title from the PR title and the PR number, then adding a short log of
-  # what is being merged and add a diff stat of the files changed by the merge.
+	local from_branch="$1"
+	local to_branch="$2"
+	local pr_ref="$3"
+	# Create default merge log message by making a title prefix (from config),
+	# title from the PR title and the PR number, then adding a short log of
+	# what is being merged and add a diff stat of the files changed by the merge.
 
-cat <<EOF
+	cat <<EOF
 ${title_prefix}${title} (#${pr_num})
 $(common::pr_message "${pr_ref}")
 
 EOF
 
-# Don't include the commit titles or diff stat if squash merging - it doesn't
-# make sense, because usually there are fixup commits with irrelevant titles
-# and the diff stat can be easily shown with `git log --stat=72 ...`.
-if ! "${squash_merge}"; then
-  cat <<EOF
+	# Don't include the commit titles or diff stat if squash merging - it doesn't
+	# make sense, because usually there are fixup commits with irrelevant titles
+	# and the diff stat can be easily shown with `git log --stat=72 ...`.
+	if ! "${squash_merge}"; then
+		cat <<EOF
 This merges the following commits:
 $(git log --reverse --pretty=tformat:"* %s" "${to_branch}..${from_branch}")
 
 $(git diff --no-color --stat=72 "${to_branch}...${from_branch}" | sed 's/^/    /')
 
 EOF
-fi
+	fi
 
-cat <<EOF
+	cat <<EOF
 Pull-Request: ${pr_url}
 
 # Gitmoji: https://gitmoji.carloscuesta.me
@@ -495,11 +496,11 @@ EOF
 }
 
 common::pr_message() {
-  local pr_ref="$1"
-  echo
-  gh pr view --json body -q .body "${pr_ref}" \
-  | tr -d \\015 \
-  | awk "${markdown_for_commit_awk}"
+	local pr_ref="$1"
+	echo
+	gh pr view --json body -q .body "${pr_ref}" |
+		tr -d \\015 |
+		awk "${markdown_for_commit_awk}"
 }
 
 # shellcheck disable=SC2016
