@@ -220,7 +220,7 @@ common::setup() {
 	pr_url="$(gh pr view --json url -q .url "${pr_ref}")"
 
 	if [[ "${squash_singles}" == 'true' && "${squash_merge}" == 'false' ]]; then
-		if [[ "$(git rev-list --count "${feature}" "^${master}")" == 1 ]]; then
+		if [[ "$(git rev-list --count "${feature}" "^${master}" --)" == 1 ]]; then
 			squash_merge=true
 		fi
 	fi
