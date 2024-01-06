@@ -208,19 +208,19 @@ common::setup() {
 
 	# TODO(camh): Combine multiple `gh pr view` calls into one
 	# gh pr view --json baseRefName,title,number,url \
-	#   -q '"master=\(.baseRefName|@sh)\ntitle=\(.title|@sh)\npr_num=\(.number|@sh)\npr_url=\(.url|@sh)"'
-	# gh pr view --json baseRefName,title,number,url -q 'to_entries[] | "\(.key)=\(.value|@sh)"'
-	if ! master=$(gh pr view --json baseRefName -q .baseRefName "${pr_ref}"); then
+	#   --jq '"master=\(.baseRefName|@sh)\ntitle=\(.title|@sh)\npr_num=\(.number|@sh)\npr_url=\(.url|@sh)"'
+	# gh pr view --json baseRefName,title,number,url --jq 'to_entries[] | "\(.key)=\(.value|@sh)"'
+	if ! master=$(gh pr view --json baseRefName --jq .baseRefName "${pr_ref}"); then
 		printf 'Cannot get base branch for pull request. Is there a PR?\n' >&2
 		return 1
 	fi
 
-	title="$(gh pr view --json title -q .title "${pr_ref}")"
-	pr_num="$(gh pr view --json number -q .number "${pr_ref}")"
-	pr_url="$(gh pr view --json url -q .url "${pr_ref}")"
+	title="$(gh pr view --json title --jq .title "${pr_ref}")"
+	pr_num="$(gh pr view --json number --jq .number "${pr_ref}")"
+	pr_url="$(gh pr view --json url --jq .url "${pr_ref}")"
 
 	if [[ "${squash_singles}" == 'true' && "${squash_merge}" == 'false' ]]; then
-		if [[ "$(git rev-list --count "${feature}" "^${master}")" == 1 ]]; then
+		if [[ "$(git rev-list --count "${feature}" "^${master}" --)" == 1 ]]; then
 			squash_merge=true
 		fi
 	fi
@@ -248,7 +248,7 @@ prmerge::prepare() {
 		do_pull=true
 	fi
 
-	git checkout -q "${master}"
+	git switch --quiet "${master}"
 
 	if "${do_pull}"; then
 		git pull
@@ -256,9 +256,9 @@ prmerge::prepare() {
 			# If we are merging via PR number and not a local branch, delete the branch we
 			# created with `gh pr checkout` earlier. This will leave us on master.
 			if [[ -n "${cli_pr_num}" ]]; then
-				git branch -d "${feature}"
+				git branch --delete "${feature}"
 			else
-				git checkout "${feature}"
+				git switch "${feature}"
 			fi
 			printf 'Local %s is not up-to-date. Update %s before merging\n' "${master}" "${feature}"
 			exit 1
@@ -337,7 +337,7 @@ prmerge::local_merge() {
 		if ! git merge --edit --no-ff -m "${merge_message}" "${feature}"; then
 			printf 'merge aborted\n' >&2
 			git merge --abort
-			git checkout -q "${feature}"
+			git switch --quiet "${feature}"
 			return 1
 		fi
 	fi
@@ -358,7 +358,7 @@ prmerge::squash_merge() {
 	common::editor "${commit_msg_file}"
 	if ! grep -E -q -v -e '^[[:space:]]*(#|$)' "${commit_msg_file}"; then
 		printf 'no commit message. merge aborted\n'
-		git checkout -q "${feature}"
+		git switch --quiet "${feature}"
 		return 1
 	fi
 	local commit_title commit_message
@@ -375,8 +375,8 @@ prmerge::squash_merge() {
 			--raw-field "sha=$(git rev-parse "${feature}")" \
 			--raw-field "merge_method=squash"
 	); then
-		jq -r .message <<<"${result}"
-		git checkout -q "${feature}"
+		jq --raw-output .message <<<"${result}"
+		git switch --quiet "${feature}"
 		return 1
 	fi
 
@@ -391,21 +391,21 @@ prupdate::update() {
 	# feature branch into it.
 	local tmpmaster="prupdate/${feature}"
 	git branch --force "${tmpmaster}" "${master}@{upstream}"
-	git checkout -q "${tmpmaster}"
+	git switch --quiet "${tmpmaster}"
 
 	merge_message="$(common::merge_message "${feature}" "${tmpmaster}" "${pr_ref}")"
 	if ! git merge --edit --no-ff -m "${merge_message}" "${feature}"; then
 		printf 'merge aborted\n' >&2
 		git merge --abort
-		git checkout -q "${feature}"
-		git branch -D "${tmpmaster}"
+		git switch --quiet "${feature}"
+		git branch --delete --force "${tmpmaster}"
 		return 1
 	fi
 
 	# reset feature branch to updated feature branch
-	git checkout -q "${feature}"
+	git switch --quiet "${feature}"
 	git reset --hard "${tmpmaster}"
-	git branch -D "${tmpmaster}"
+	git branch --delete --force "${tmpmaster}"
 	git push
 }
 
@@ -498,7 +498,7 @@ EOF
 common::pr_message() {
 	local pr_ref="$1"
 	echo
-	gh pr view --json body -q .body "${pr_ref}" |
+	gh pr view --json body --jq .body "${pr_ref}" |
 		tr -d \\015 |
 		awk "${markdown_for_commit_awk}"
 }
