@@ -23,5 +23,5 @@ now=$(date +%s)
 date_subst="\$(($now - $num_commits + \$(git rev-list --count ${fork_point}..)))"
 
 git rebase \
-  --exec "git commit --amend --no-edit --date=\"${date_subst}\"" \
-  "${fork_point}"
+	--exec "git commit --amend --no-edit --date=\"${date_subst}\"" \
+	"${fork_point}"
