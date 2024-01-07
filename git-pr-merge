@@ -54,6 +54,7 @@ main() {
 	set -e
 	set -u
 	set -o pipefail
+	shopt -s extglob
 
 	case "${0##*/}" in
 	git-pr-merge)
@@ -206,18 +207,12 @@ common::setup() {
 		pr_ref="${feature}"
 	fi
 
-	# TODO(camh): Combine multiple `gh pr view` calls into one
-	# gh pr view --json baseRefName,title,number,url \
-	#   --jq '"master=\(.baseRefName|@sh)\ntitle=\(.title|@sh)\npr_num=\(.number|@sh)\npr_url=\(.url|@sh)"'
-	# gh pr view --json baseRefName,title,number,url --jq 'to_entries[] | "\(.key)=\(.value|@sh)"'
 	if ! master=$(gh pr view --json baseRefName --jq .baseRefName "${pr_ref}"); then
 		printf 'Cannot get base branch for pull request. Is there a PR?\n' >&2
 		return 1
 	fi
 
-	title="$(gh pr view --json title --jq .title "${pr_ref}")"
 	pr_num="$(gh pr view --json number --jq .number "${pr_ref}")"
-	pr_url="$(gh pr view --json url --jq .url "${pr_ref}")"
 
 	if [[ "${squash_singles}" == 'true' && "${squash_merge}" == 'false' ]]; then
 		if [[ "$(git rev-list --count "${feature}" "^${master}" --)" == 1 ]]; then
@@ -468,10 +463,23 @@ common::merge_message() {
 	# title from the PR title and the PR number, then adding a short log of
 	# what is being merged and add a diff stat of the files changed by the merge.
 
+	# Get the PR body to be the commit message. Remove any trailers so we
+	# can re-add them after the log and diff-stat along with our own
+	# Pull-request: trailer.
+	local body trailers title pr_url
+	title="$(gh pr view --json title --jq .title "${pr_ref}")"
+	body=$(gh pr view --json body --jq .body "${pr_ref}" | tr -d '\015')
+	body=$(awk "${markdown_for_commit_awk}" <<<"${body}") # clean up markdown for readability
+	body="${body%%*($'\n')}"                              # strip trailing newlines.
+	trailers=$(git interpret-trailers --parse <<<"${body}")
+	body="${body%%*($'\n')"${trailers}"}" # strip trailers and preceding newlines
+
+	pr_url="$(gh pr view --json url --jq .url "${pr_ref}")"
+
 	cat <<EOF
 ${title_prefix}${title} (#${pr_num})
-$(common::pr_message "${pr_ref}")
 
+${body}
 EOF
 
 	# Don't include the commit titles or diff stat if squash merging - it doesn't
@@ -479,29 +487,25 @@ EOF
 	# and the diff stat can be easily shown with `git log --stat=72 ...`.
 	if ! "${squash_merge}"; then
 		cat <<EOF
+
 This merges the following commits:
 $(git log --reverse --pretty=tformat:"* %s" "${to_branch}..${from_branch}")
 
 $(git diff --no-color --stat=72 "${to_branch}...${from_branch}" | sed 's/^/    /')
-
 EOF
 	fi
 
+	# Put a newline ahead of $trailers only if it is non-empty, otherwise we end
+	# up with two newlines in the empty trailers case.
+	trailers="${trailers:+$'\n'${trailers}}"
 	cat <<EOF
-Pull-Request: ${pr_url}
+${trailers}
+Pull-request: ${pr_url}
 
 # Gitmoji: https://gitmoji.carloscuesta.me
 # rxaviers list: https://gist.github.com/rxaviers/7360908
 #
 EOF
-}
-
-common::pr_message() {
-	local pr_ref="$1"
-	echo
-	gh pr view --json body --jq .body "${pr_ref}" |
-		tr -d \\015 |
-		awk "${markdown_for_commit_awk}"
 }
 
 # shellcheck disable=SC2016
