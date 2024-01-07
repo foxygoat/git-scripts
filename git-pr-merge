@@ -410,10 +410,9 @@ prupdate::update() {
 }
 
 prmerge::clean() {
-	# Branches merged on github will appear unmerged locally. Force delete
-	local delete
-	"${squash_merge}" && delete=-D || delete=-d
-	git branch "${delete}" "${feature}" # delete local branch
+	# Feature branches need to be force-deleted after a squash merge as they
+	# appear unmerged locally. So just always force delete.
+	git branch --delete --force "${feature}"
 
 	if remote=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null); then
 		remote=${remote%%/*} # strip off branch name
@@ -431,7 +430,9 @@ prmerge::clean() {
 		sleep "${sleep_time_before_delete}"
 	fi
 
-	if [[ "${delete_remote_branch}" == 'true' ]]; then
+	local autodelete
+	autodelete=$(gh repo view --json deleteBranchOnMerge --jq .deleteBranchOnMerge)
+	if [[ "${delete_remote_branch}" == 'true' ]] && [[ "${autodelete}" == 'false' ]]; then
 		if ! git push "${remote}" --delete "${feature}"; then
 			echo 'Perhaps GitHub already deleted the branch? Disable deletion with:'
 			echo 'git config pr.merge.delete-remote-branch false'
